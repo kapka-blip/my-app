@@ -5,21 +5,30 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>일일 식단 자동 계산기</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script type="module">
+<script type="module">
+        // Import 문들은 그대로 유지합니다.
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setPersistence, browserSessionPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        
-        // ⭐️ 'where', 'documentId' 임포트 추가 (기간별 조회를 위해)
         import { getFirestore, doc, getDoc, setDoc, collection, query, getDocs, setLogLevel, where, documentId } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // Firebase 설정 및 초기화
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        // ⭐️⭐️⭐️ 이 부분을 이미지 정보로 정확히 덮어쓰세요! ⭐️⭐️⭐️
+const firebaseConfig = {
+  apiKey: "AIzaSyCjTyTrnhFuGV8PVd3mtMj9zQd7DFX4J3s",
+  authDomain: "meal-tracker-f2644.firebaseapp.com",
+  projectId: "meal-tracker-f2644",
+  storageBucket: "meal-tracker-f2644.firebasestorage.app",
+  messagingSenderId: "739384992411",
+  appId: "1:739384992411:web:1e47f734197cd6dff89c3e"
+};
+        // ⭐️⭐️⭐️ 여기까지 덮어쓰면 됩니다. ⭐️⭐️⭐️
+        
+        // 'appId' 변수를 projectId로 고정 (DB 경로를 위함)
+        const appId = firebaseConfig.projectId; // 'meal-tracker-f2644'
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
         let app, db, auth, userId = null;
 
-        // 전역 함수로 노출
+        // 전역 함수로 노출 (나머지는 그대로 둡니다.)
         window.initializeApp = initializeApp;
         window.getAuth = getAuth;
         window.signInAnonymously = signInAnonymously;
@@ -35,14 +44,12 @@
         window.setLogLevel = setLogLevel;
         window.setPersistence = setPersistence;
         window.browserSessionPersistence = browserSessionPersistence;
-        
-        // ⭐️ 'where', 'documentId' 전역 노출
         window.where = where;
         window.documentId = documentId;
         
-        window.getFirebaseInstances = () => ({ app, db, auth, userId, appId, initialAuthToken });
+        // config 객체와 수정된 appId를 전달하도록 수정
+        window.getFirebaseInstances = () => ({ app, db, auth, userId, appId, initialAuthToken, config: firebaseConfig });
         window.setUserId = (id) => { userId = id; };
-
     </script>
     <style>
         /* (스타일은 기존과 동일) */
@@ -235,54 +242,28 @@
         }
 
         // Firebase 초기화 및 인증
+// ⭐️ 이 initializeFirebase 함수로 교체하세요 (기존 것과 덮어쓰기) ⭐️
         async function initializeFirebase() {
             try {
                 const instances = window.getFirebaseInstances();
-                appId = instances.appId;
+                appId = instances.appId; 
                 initialAuthToken = instances.initialAuthToken;
-
-                const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
                 
-                // 앱 초기화
-                const app = window.initializeApp(firebaseConfig);
-                db = window.getFirestore(app);
-                auth = window.getAuth(app);
-                window.setLogLevel('debug'); // Firestore 로그 레벨 설정
+                // ⭐️ 1번에서 설정한 config 객체를 여기서 받아옵니다.
+                const firebaseConfig = instances.config; 
 
-                // 세션 동안 인증 유지
-                await window.setPersistence(auth, window.browserSessionPersistence);
-
-                // 인증 처리
-                if (initialAuthToken) {
-                    await window.signInWithCustomToken(auth, initialAuthToken);
-                } else {
-                    await window.signInAnonymously(auth);
+                if (!firebaseConfig || !firebaseConfig.projectId) {
+                    // 이 오류가 여전히 뜬다면 1번 블록의 firebaseConfig 정의에 문제가 있는 것입니다.
+                    throw new Error("Firebase 설정이 올바르지 않습니다. 코드 상단 <script type=\"module\">을 확인하세요.");
                 }
-
-                // 인증 상태 변경 감지
+                
+                // 앱 초기화: 여기로 config 객체가 전달됩니다!
+                const app = window.initializeApp(firebaseConfig);
+                // ... (나머지 코드는 이전 답변과 동일) ...
+                
+                // ... (나머지 코드는 이전 답변과 동일) ...
                 window.onAuthStateChanged(auth, (user) => {
-                    if (user) {
-                        userId = user.uid;
-                        window.setUserId(userId);
-                        document.getElementById('user-id-display').textContent = userId;
-                        
-                        document.getElementById('auth-status-message').classList.remove('bg-red-100', 'text-red-600');
-                        document.getElementById('auth-status-message').classList.add('bg-green-100', 'text-green-600');
-                        document.getElementById('auth-status-message').textContent = `✅ 데이터베이스 연결 완료 (User ID: ${userId.substring(0, 8)}...)`;
-
-                        // 인증 완료 후 오늘 날짜의 식단 로드
-                        loadMealsForDate(mealInput.date.value);
-                    } else {
-                        // 사용자 ID가 없을 경우 임시 ID 사용 (익명 로그인 실패 시)
-                        userId = 'anonymous-user-' + Math.random().toString(36).substring(2, 11);
-                        window.setUserId(userId);
-                        document.getElementById('user-id-display').textContent = userId;
-                        
-                        document.getElementById('auth-status-message').classList.remove('bg-green-100', 'text-green-600');
-                        document.getElementById('auth-status-message').classList.add('bg-yellow-100', 'text-yellow-600');
-                        document.getElementById('auth-status-message').textContent = `⚠️ 익명 로그인됨 (임시 ID: ${userId.substring(0, 8)}...)`;
-                        loadMealsForDate(mealInput.date.value);
-                    }
+                    // ... (나머지 코드는 이전 답변과 동일) ...
                 });
 
             } catch (error) {
@@ -290,10 +271,9 @@
                 document.getElementById('auth-status-message').textContent = `❌ 데이터베이스 연결 실패: ${error.message}`;
                 document.getElementById('auth-status-message').classList.remove('bg-green-100', 'text-green-600');
                 document.getElementById('auth-status-message').classList.add('bg-red-100', 'text-red-600');
-                db = null; // DB 연결 실패 표시
+                db = null; 
             }
-        }
-        
+        }        
         // Firestore 컬렉션 경로 생성
         function getCollectionPath() {
             if (!userId) {
