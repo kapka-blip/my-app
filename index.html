@@ -22,9 +22,17 @@
             appId: "1:739384992411:web:1e47f734197cd6dff89c3e"
         };
         
-        // 3. 변수 초기화
+        // 3. 변수 초기화 (URL에서 auth_token 읽어오기)
         const appId = firebaseConfig.projectId; // 'meal-tracker-f2644'
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        
+        // ⭐️ 수정된 부분: URL 쿼리 파라미터에서 'auth_token' 값 추출 ⭐️
+        function getQueryParam(param) {
+            const urlParams = new URLSearchParams(window.location.search);
+            return urlParams.get(param);
+        }
+        const initialAuthToken = getQueryParam('auth_token');
+        // ⭐️ ------------------------------------------- ⭐️
+
 
         let app, db, auth, userId = null;
 
@@ -247,9 +255,10 @@
             try {
                 const instances = window.getFirebaseInstances();
                 appId = instances.appId; 
-                initialAuthToken = instances.initialAuthToken;
                 const firebaseConfig = instances.config; 
-
+                // ⭐️ 수정된 부분: initialAuthToken을 인스턴스에서 가져옴 ⭐️
+                const initialAuthToken = instances.initialAuthToken; 
+                
                 if (!firebaseConfig || !firebaseConfig.projectId) {
                     throw new Error("Firebase 설정이 올바르지 않습니다.");
                 }
@@ -261,9 +270,12 @@
 
                 await window.setPersistence(auth, window.browserSessionPersistence);
 
+                // 4. 인증 처리 (익명 로그인 또는 커스텀 토큰 사용)
                 if (initialAuthToken) {
-                    await window.signInWithCustomToken(auth, initialAuthToken);
+                    // ⭐️ 커스텀 토큰이 있으면, 토큰으로 로그인 시도 ⭐️
+                    await window.signInWithCustomToken(auth, initialAuthToken); 
                 } else {
+                    // ⭐️ 토큰이 없으면, 익명 로그인 ⭐️
                     await window.signInAnonymously(auth);
                 }
 
@@ -345,7 +357,7 @@
         }
 
 
-        // 식단 목록 렌더링 및 합계 계산 (수정 버튼 추가)
+        // 식단 목록 렌더링 및 합계 계산 (수정 버튼 포함)
         function renderMeals() {
             mealsList.innerHTML = '';
             
@@ -397,7 +409,7 @@
             totalsDisplay.fat.textContent = totalFat;
         }
 
-        // ⭐️ 식단 수정 함수 추가 ⭐️
+        // 식단 수정 함수
         window.editMeal = function(index) {
             if (index < 0 || index >= meals.length) return;
 
@@ -416,8 +428,6 @@
 
             showModal("수정 모드", `${mealToEdit.name} 항목이 입력 필드에 로드되었습니다. 내용을 수정한 후 [+ 식단 추가] 버튼을 다시 누르세요.`, false);
         }
-        // ⭐️ ------------------- ⭐️
-
 
         // 식단 추가
         window.addMeal = function() {
