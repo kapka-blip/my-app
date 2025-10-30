@@ -7,9 +7,9 @@
     <script src="https://cdn.tailwindcss.com"></script>
 
     <script type="module">
-        // 1. 필요한 함수 임포트 (Firebase SDK 11.6.1)
+        // 1. 필요한 함수 임포트
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setPersistence, browserSessionPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setPersistence, browserSessionPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, getDoc, setDoc, collection, query, getDocs, setLogLevel, where, documentId } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // 2. Firebase 설정
@@ -48,7 +48,9 @@
         window.getDocs = getDocs;
         window.setLogLevel = setLogLevel;
         window.setPersistence = setPersistence;
+        // ⭐️⭐️⭐️ browserLocalPersistence 추가 ⭐️⭐️⭐️
         window.browserSessionPersistence = browserSessionPersistence;
+        window.browserLocalPersistence = browserLocalPersistence;
         window.where = where;
         window.documentId = documentId;
         
@@ -274,7 +276,9 @@
                 db = window.getFirestore(app);
                 auth = window.getAuth(app);
 
-                await window.setPersistence(auth, window.browserSessionPersistence);
+                // ⭐️⭐️⭐️ 여기가 핵심 수정: browserSessionPersistence -> browserLocalPersistence ⭐️⭐️⭐️
+                await window.setPersistence(auth, window.browserLocalPersistence);
+                // ⭐️⭐️⭐️ ------------------------------------------------------------- ⭐️⭐️⭐️
 
                 try {
                     if (initialAuthToken) {
@@ -307,7 +311,7 @@
                         statusMessage.classList.remove('bg-green-100', 'text-green-600', 'bg-yellow-100', 'text-yellow-600');
                         statusMessage.classList.add('bg-red-100', 'text-red-600');
                         statusMessage.textContent = `❌ 데이터베이스 연결 실패: 인증 불가`;
-                        showModal("연결 오류", "Firebase 인증을 완료하지 못했습니다. 새로고침 후 다시 시도해 주세요.", true);
+                        // 브라우저 닫고 다시 실행할 경우를 대비하여 오류 모달은 띄우지 않음
                     }
                 });
 
@@ -359,7 +363,7 @@
             renderMeals();
         }
 
-        // 식단 목록 렌더링 및 합계 계산
+        // 식단 목록 렌더링 및 합계 계산 (생략... 이전 코드와 동일)
         function renderMeals() {
             mealsList.innerHTML = '';
             
@@ -411,7 +415,7 @@
             totalsDisplay.fat.textContent = totalFat;
         }
 
-        // 식단 수정 함수
+        // 식단 수정 함수 (생략... 이전 코드와 동일)
         window.editMeal = function(index) {
             if (index < 0 || index >= meals.length) return;
             const mealToEdit = meals[index];
@@ -425,7 +429,7 @@
             showModal("수정 모드", `${mealToEdit.name} 항목이 입력 필드에 로드되었습니다. 내용을 수정한 후 [+ 식단 추가] 버튼을 다시 누르세요.`, false);
         }
 
-        // 식단 추가
+        // 식단 추가 (생략... 이전 코드와 동일)
         window.addMeal = function() {
             const name = mealInput.name.value.trim();
             const kcal = parseInt(mealInput.kcal.value) || 0;
@@ -459,13 +463,13 @@
             mealInput.name.focus();
         }
 
-        // 식단 삭제
+        // 식단 삭제 (생략... 이전 코드와 동일)
         window.removeMeal = function(index) {
             meals.splice(index, 1);
             renderMeals();
         }
 
-        // 식단 저장
+        // 식단 저장 (생략... 이전 코드와 동일)
         async function saveTodaysMeals() {
             if (!db || !userId) {
                 showModal("저장 오류", "데이터베이스 연결이 준비되지 않았습니다. 잠시 후 다시 시도해 주세요.", true);
@@ -505,7 +509,7 @@
         }
 
 
-        // 뷰 전환 기능
+        // 뷰 전환 기능 (생략... 이전 코드와 동일)
         window.switchView = function(viewName) {
             const dailyInputView = document.getElementById('daily-input-view');
             const reportView = document.getElementById('report-view');
@@ -583,6 +587,18 @@
                 // 3. 컬렉션 경로 생성 및 쿼리
                 const collectionPath = getCollectionPath(targetUserId);
                 if (!collectionPath) return;
+                
+                // ⭐️⭐️⭐️ 디버그 정보 출력 시작 ⭐️⭐️⭐️
+                const debugInfo = document.createElement('div');
+                debugInfo.className = 'bg-red-50 p-3 rounded-lg text-sm text-red-700 font-mono mb-4';
+                debugInfo.innerHTML = `
+                    <p><strong>[디버그 정보]</strong></p>
+                    <p>조회 대상 ID: ${targetUserId}</p>
+                    <p>조회 컬렉션 경로: ${collectionPath}</p>
+                    <p>조회 기간: ${startDate} ~ ${endDate}</p>
+                `;
+                reportContent.appendChild(debugInfo); // 보고서 내용 위에 디버그 정보 추가
+                // ⭐️⭐️⭐️ 디버그 정보 출력 끝 ⭐️⭐️⭐️
 
                 const q = window.query(
                     window.collection(db, collectionPath),
@@ -603,12 +619,12 @@
                 loadingMessage.classList.add('hidden');
 
                 if (reportData.length === 0) {
-                    reportContent.innerHTML = `<p class="text-gray-500 text-center p-10">${viewTitle}: 해당 기간에 저장된 식단 기록이 없습니다.</p>`;
+                    reportContent.innerHTML += `<p class="text-gray-500 text-center p-10">${viewTitle}: 해당 기간에 저장된 식단 기록이 없습니다. (ID와 경로가 올바른지 확인하세요)</p>`;
                     return;
                 }
                 
                 // 5. 결과 렌더링
-                reportContent.innerHTML = `<h3 class="text-xl font-bold text-gray-700 mb-4">${viewTitle}</h3>`;
+                reportContent.innerHTML += `<h3 class="text-xl font-bold text-gray-700 mb-4">${viewTitle}</h3>`;
 
                 reportData.forEach(day => {
                     const dayElement = document.createElement('div');
@@ -648,7 +664,7 @@
 
             } catch (error) {
                 console.error("보고서 조회 오류:", error);
-                reportContent.innerHTML = `<p class="text-red-500 text-center p-10">
+                reportContent.innerHTML += `<p class="text-red-500 text-center p-10">
                     ❌ 기록을 불러오는 중 오류가 발생했습니다: ${error.message}
                     <br><br>
                     (가장 일반적인 원인은 **Firebase 보안 규칙**의 **read** 권한 부족입니다.)
@@ -657,7 +673,7 @@
         }
 
 
-        // 이벤트 리스너 및 초기화
+        // 이벤트 리스너 및 초기화 (생략... 이전 코드와 동일)
         window.onload = function() {
             // 날짜 기본값 설정
             const today = new Date().toISOString().substring(0, 10);
