@@ -23,7 +23,7 @@
         };
         
         // 3. 변수 초기화 (URL에서 auth_token 읽어오기)
-        const appId = firebaseConfig.projectId; // 'meal-tracker-f2644'
+        const appId = firebaseConfig.projectId; 
         
         function getQueryParam(param) {
             const urlParams = new URLSearchParams(window.location.search);
@@ -229,7 +229,7 @@
             protein: document.getElementById('total-protein'),
             fat: document.getElementById('total-fat'),
         };
-        const friendIdInput = document.getElementById('friend-user-id'); // ⭐️ 새로 추가된 입력 필드 ⭐️
+        const friendIdInput = document.getElementById('friend-user-id'); 
 
         // Firebase 인스턴스 (초기화 후 설정됨)
         let db, auth, userId, appId, initialAuthToken;
@@ -274,16 +274,23 @@
                 const app = window.initializeApp(firebaseConfig);
                 db = window.getFirestore(app);
                 auth = window.getAuth(app);
-                window.setLogLevel('debug'); 
+                // window.setLogLevel('debug'); // 디버그 로그는 잠시 끕니다.
 
                 await window.setPersistence(auth, window.browserSessionPersistence);
 
-                // 4. 인증 처리 (익명 로그인 또는 커스텀 토큰 사용)
-                if (initialAuthToken) {
-                    await window.signInWithCustomToken(auth, initialAuthToken); 
-                } else {
+                // 4. 인증 처리 (커스텀 토큰 사용 또는 익명 로그인)
+                try {
+                    if (initialAuthToken) {
+                        await window.signInWithCustomToken(auth, initialAuthToken); 
+                    } else {
+                        await window.signInAnonymously(auth);
+                    }
+                } catch (authError) {
+                    console.warn("인증 토큰 오류 발생, 익명 로그인 재시도:", authError);
+                    // 토큰이 만료되었거나 잘못된 경우, 익명 로그인으로 폴백
                     await window.signInAnonymously(auth);
                 }
+
 
                 window.onAuthStateChanged(auth, (user) => {
                     const statusMessage = document.getElementById('auth-status-message');
@@ -298,16 +305,16 @@
                         statusMessage.classList.add('bg-green-100', 'text-green-600');
                         statusMessage.textContent = `✅ 데이터베이스 연결 완료 (User ID: ${userId.substring(0, 8)}...)`;
 
+                        // 인증 후 데이터 로드 시작
                         loadMealsForDate(mealInput.date.value);
                     } else {
-                        userId = 'anonymous-user-' + Math.random().toString(36).substring(2, 11);
-                        window.setUserId(userId);
-                        userIdDisplay.textContent = userId;
-                        
-                        statusMessage.classList.remove('bg-red-100', 'text-red-600', 'bg-green-100', 'text-green-600');
-                        statusMessage.classList.add('bg-yellow-100', 'text-yellow-600');
-                        statusMessage.textContent = `⚠️ 익명 로그인됨 (임시 ID: ${userId.substring(0, 8)}...)`;
-                        loadMealsForDate(mealInput.date.value);
+                         // 익명 로그인 실패 시 사용자에게 알림
+                        userId = null;
+                        userIdDisplay.textContent = '인증 실패';
+                        statusMessage.classList.remove('bg-green-100', 'text-green-600', 'bg-yellow-100', 'text-yellow-600');
+                        statusMessage.classList.add('bg-red-100', 'text-red-600');
+                        statusMessage.textContent = `❌ 데이터베이스 연결 실패: 인증 불가`;
+                        showModal("연결 오류", "Firebase 인증을 완료하지 못했습니다. 새로고침 후 다시 시도해 주세요.", true);
                     }
                 });
 
@@ -320,9 +327,9 @@
             }
         }
         
-        // ⭐️ Firestore 컬렉션 경로 생성 함수 (조회할 User ID를 인수로 받도록 수정) ⭐️
+        // Firestore 컬렉션 경로 생성 함수
         function getCollectionPath(targetUserId) {
-            const id = targetUserId || userId; // 인수가 없으면 현재 사용자 ID 사용
+            const id = targetUserId || userId; 
             if (!id) {
                 console.error("Target User ID is not defined.");
                 return null;
@@ -334,11 +341,11 @@
 
         // 현재 날짜의 식단 데이터 로드
         async function loadMealsForDate(date) {
-            meals = []; // 이전에 입력된 데이터 초기화
-            renderMeals(); // 목록을 먼저 비움
+            meals = []; 
+            renderMeals(); 
             
             if (!db || !userId) {
-                console.warn("데이터베이스 또는 사용자 ID가 준비되지 않았습니다. 로드 건너뛰기.");
+                // 이 상황은 initializeFirebase에서 처리되므로, 여기서 경고만 표시
                 return;
             }
 
@@ -358,14 +365,14 @@
             } catch (error) {
                 console.error("데이터 로드 오류:", error);
                 // 권한 오류가 잦으므로 로드 오류는 모달로 알림
-                showModal("데이터 로드 오류", `식단을 불러오는 중 오류가 발생했습니다: ${error.message}`, true);
+                showModal("데이터 로드 오류", `식단을 불러오는 중 오류가 발생했습니다: ${error.message}. (Firestore 규칙을 확인해 보세요)`, true);
                 meals = [];
             }
             renderMeals();
         }
 
 
-        // 식단 목록 렌더링 및 합계 계산 (수정 버튼 포함)
+        // 식단 목록 렌더링 및 합계 계산
         function renderMeals() {
             mealsList.innerHTML = '';
             
@@ -511,10 +518,9 @@
 
                 showModal("저장 완료", `${date}의 식단 ${meals.length}개가 성공적으로 저장되었습니다.`, false);
                 
-                // 저장 후에도 현재 목록은 유지됨 (날짜 이동 시 로드됨)
             } catch (error) {
                 console.error("데이터 저장 오류:", error);
-                showModal("데이터 저장 오류", `식단을 저장하는 중 오류가 발생했습니다: ${error.message}`, true);
+                showModal("데이터 저장 오류", `식단을 저장하는 중 오류가 발생했습니다: ${error.message}. (Firestore 규칙의 write 권한을 확인해 보세요)`, true);
             }
         }
 
@@ -552,12 +558,12 @@
             }
         }
 
-        // ⭐️ 보고서 기록 조회 (친구 ID로 조회 가능하도록 수정) ⭐️
+        // 보고서 기록 조회 (친구 ID로 조회 가능하도록 수정)
         async function renderReport() {
             const reportContent = document.getElementById('report-content');
             const loadingMessage = document.getElementById('report-loading-message');
             
-            reportContent.innerHTML = ''; // 기존 내용 초기화
+            reportContent.innerHTML = ''; 
             loadingMessage.textContent = "저장된 기록을 불러오는 중...";
             reportContent.appendChild(loadingMessage);
             loadingMessage.classList.remove('hidden');
@@ -567,9 +573,9 @@
             // 1. 조회할 사용자 ID 결정 (친구 ID 입력 필드를 먼저 확인)
             const targetFriendId = friendIdInput.value.trim();
             const targetUserId = targetFriendId || userId;
-            const isFriendView = !!targetFriendId; // 친구 ID로 조회하는지 여부
+            const isFriendView = !!targetFriendId; 
             
-            const viewTitle = isFriendView ? `친구 (${targetFriendId.substring(0, 8)}...)의 기록` : '본인의 기록';
+            const viewTitle = isFriendView ? `친구 (${targetUserId ? targetUserId.substring(0, 8) + '...' : 'ID 없음'})의 기록` : '본인의 기록';
 
             // 2. 기간별 조회 날짜 읽기
             const startDate = document.getElementById('report-start-date')?.value;
@@ -587,7 +593,7 @@
             }
             
             if (!db || !targetUserId) {
-                loadingMessage.textContent = `❌ ${viewTitle}: 데이터베이스 연결 실패 또는 사용자 인증 대기 중.`;
+                loadingMessage.textContent = `❌ ${viewTitle}: 데이터베이스 연결 실패 또는 사용자 ID를 찾을 수 없습니다.`;
                 loadingMessage.classList.remove('text-gray-500');
                 loadingMessage.classList.add('text-red-500');
                 return;
@@ -669,7 +675,7 @@
                 reportContent.innerHTML = `<p class="text-red-500 text-center p-10">
                     ❌ 기록을 불러오는 중 오류가 발생했습니다: ${error.message}
                     <br><br>
-                    (참고: 친구의 기록을 조회하려면 Firestore 보안 규칙이 **`allow read: if true`** 또는 **`allow read: if request.auth != null;`** 로 설정되어야 합니다.)
+                    (참고: 친구의 기록을 조회하려면 Firestore 보안 규칙의 **read** 권한을 확인해야 합니다.)
                 </p>`;
             }
         }
