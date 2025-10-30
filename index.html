@@ -1,214 +1,4 @@
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>일일 식단 자동 계산기</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-
-    <script type="module">
-        // 1. 필요한 함수 임포트 (Firebase SDK 11.6.1)
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setPersistence, browserSessionPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, getDoc, setDoc, collection, query, getDocs, setLogLevel, where, documentId } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
-        // 2. Firebase 설정
-        const firebaseConfig = {
-            apiKey: "AIzaSyCjTyTrnhFuGV8PVd3mtMj9zQd7DFX4J3s",
-            authDomain: "meal-tracker-f2644.firebaseapp.com",
-            projectId: "meal-tracker-f2644",
-            storageBucket: "meal-tracker-f2644.appspot.com", 
-            messagingSenderId: "739384992411",
-            appId: "1:739384992411:web:1e47f734197cd6dff89c3e"
-        };
-        
-        // 3. 변수 초기화 (URL에서 auth_token 읽어오기)
-        const appId = firebaseConfig.projectId; 
-        
-        function getQueryParam(param) {
-            const urlParams = new URLSearchParams(window.location.search);
-            return urlParams.get(param);
-        }
-        const initialAuthToken = getQueryParam('auth_token');
-
-        let app, db, auth, userId = null;
-
-        // 4. 전역 함수로 노출
-        window.initializeApp = initializeApp;
-        window.getAuth = getAuth;
-        window.signInAnonymously = signInAnonymously;
-        window.signInWithCustomToken = signInWithCustomToken;
-        window.onAuthStateChanged = onAuthStateChanged;
-        window.getFirestore = getFirestore;
-        window.doc = doc;
-        window.getDoc = getDoc;
-        window.setDoc = setDoc;
-        window.collection = collection;
-        window.query = query;
-        window.getDocs = getDocs;
-        window.setLogLevel = setLogLevel;
-        window.setPersistence = setPersistence;
-        window.browserSessionPersistence = browserSessionPersistence;
-        window.where = where;
-        window.documentId = documentId;
-        
-        // 5. 인스턴스/설정 반환 함수
-        window.getFirebaseInstances = () => ({ app, db, auth, userId, appId, initialAuthToken, config: firebaseConfig });
-        window.setUserId = (id) => { userId = id; };
-    </script>
-    
-    <style>
-        /* (스타일은 기존과 동일) */
-        body {
-            font-family: 'Inter', 'Noto Sans KR', sans-serif;
-        }
-        input[type=number]::-webkit-inner-spin-button,
-        input[type=number]::-webkit-outer-spin-button {
-            -webkit-appearance: none;
-            margin: 0;
-        }
-        input[type=number] {
-            -moz-appearance: textfield;
-        }
-        #report-content::-webkit-scrollbar {
-            width: 8px;
-        }
-        #report-content::-webkit-scrollbar-thumb {
-            background: #9ca3af;
-            border-radius: 4px;
-        }
-        #report-content::-webkit-scrollbar-track {
-            background: #f3f4f6;
-        }
-    </style>
-</head>
-<body class="bg-gray-100 flex items-center justify-center min-h-screen p-4">
-
-    <div class="bg-white rounded-2xl shadow-xl p-6 sm:p-8 w-full max-w-4xl">
-        
-        <h1 class="text-2xl sm:text-3xl font-bold text-center text-gray-800 mb-4">
-            일일 식단 자동 계산기
-        </h1>
-
-        <div class="flex border-b border-gray-200 mb-6">
-            <button id="tab-daily-input" onclick="switchView('daily-input')"
-                    class="px-4 py-2 text-sm sm:text-base font-medium rounded-t-lg transition-colors duration-150 border-b-2 border-indigo-500 text-indigo-600">
-                일일 입력
-            </button>
-            <button id="tab-report" onclick="switchView('report')"
-                    class="px-4 py-2 text-sm sm:text-base font-medium rounded-t-lg transition-colors duration-150 border-b-2 border-transparent text-gray-500 hover:text-indigo-600 hover:border-indigo-500">
-                저장 기록 조회
-            </button>
-        </div>
-
-        <div id="auth-status-message" class="text-center p-3 mb-4 rounded-lg text-sm transition-opacity duration-300 bg-red-100 text-red-600">
-            데이터베이스 연결 중...
-        </div>
-        
-        <div id="view-container">
-            
-            <div id="daily-input-view" class="space-y-6">
-                <div class="flex flex-col sm:flex-row justify-between items-center bg-gray-50 p-4 rounded-xl shadow-inner">
-                    <div class="mb-2 sm:mb-0">
-                        <label for="meal-date" class="block text-sm font-medium text-gray-700 mb-1">날짜 선택:</label>
-                        <input type="date" id="meal-date" class="p-2 border border-gray-300 rounded-lg w-full sm:w-auto shadow-sm focus:ring-indigo-500 focus:border-indigo-500">
-                    </div>
-                    <div class="text-xs text-gray-500 text-right w-full sm:w-auto">
-                        <span class="font-semibold">사용자 ID (공유 가능):</span>
-                        <p id="user-id-display" class="break-all mt-1"></p>
-                    </div>
-                </div>
-
-                <div class="bg-indigo-50 p-4 rounded-xl shadow-lg">
-                    <h2 class="text-xl font-semibold text-indigo-800 mb-4">식단 입력</h2>
-                    <div class="grid grid-cols-2 sm:grid-cols-6 gap-3">
-                        <input type="text" id="meal-name" placeholder="식단명 (예: 아침 식사)" class="col-span-2 p-3 border border-indigo-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500 transition-shadow shadow-md" required>
-                        <input type="number" id="meal-kcal" placeholder="Kcal" class="p-3 border border-indigo-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500 transition-shadow shadow-md" required>
-                        <input type="number" id="meal-carbs" placeholder="탄수화물(g)" class="p-3 border border-indigo-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500 transition-shadow shadow-md">
-                        <input type="number" id="meal-protein" placeholder="단백질(g)" class="p-3 border border-indigo-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500 transition-shadow shadow-md">
-                        <input type="number" id="meal-fat" placeholder="지방(g)" class="p-3 border border-indigo-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500 transition-shadow shadow-md">
-                    </div>
-                    <button id="add-meal-button"
-                            class="mt-4 w-full bg-indigo-600 text-white py-3 rounded-xl hover:bg-indigo-700 transition-colors duration-200 font-bold shadow-lg transform hover:scale-[1.01]">
-                        + 식단 추가
-                    </button>
-                </div>
-
-                <div class="space-y-4">
-                    <h2 class="text-xl font-semibold text-gray-800 border-b pb-2">오늘의 식단 목록</h2>
-                    <div id="meals-list" class="space-y-3">
-                        <p class="text-gray-500 text-center p-4" id="no-meals-message">추가된 식단이 없습니다.</p>
-                    </div>
-
-                    <div id="totals" class="bg-green-50 p-4 rounded-xl shadow-md border-l-4 border-green-500 font-semibold text-green-800">
-                        <h3 class="text-lg mb-2">총 합계</h3>
-                        <div class="grid grid-cols-4 gap-2 text-sm">
-                            <p>Kcal: <span id="total-kcal">0</span></p>
-                            <p>탄수화물(g): <span id="total-carbs">0</span></p>
-                            <p>단백질(g): <span id="total-protein">0</span></p>
-                            <p>지방(g): <span id="total-fat">0</span></p>
-                        </div>
-                    </div>
-
-                    <button id="save-button"
-                            class="w-full bg-green-600 text-white py-3 rounded-xl hover:bg-green-700 transition-colors duration-200 font-bold shadow-lg transform hover:scale-[1.01]">
-                        오늘의 식단 저장
-                    </button>
-                </div>
-            </div>
-
-            <div id="report-view" class="hidden space-y-6">
-                <h2 class="text-2xl font-bold text-gray-800">식단 저장 기록</h2>
-                
-                <div class="bg-yellow-50 p-4 rounded-xl shadow-inner border-l-4 border-yellow-500">
-                    <h3 class="text-lg font-semibold text-yellow-800 mb-2">🤝 친구 ID로 기록 조회</h3>
-                    <div class="flex gap-2">
-                        <input type="text" id="friend-user-id" placeholder="공유 받은 친구의 사용자 ID를 입력하세요 (비워두면 본인 조회)" 
-                               class="p-2 border border-yellow-300 rounded-lg w-full shadow-sm text-sm focus:ring-yellow-500 focus:border-yellow-500">
-                        <button id="self-search-button"
-                                class="bg-gray-300 text-gray-700 py-2 px-4 rounded-xl hover:bg-gray-400 transition-colors duration-200 font-medium shadow-md flex-shrink-0 text-sm">
-                            본인 조회
-                        </button>
-                    </div>
-                </div>
-                <div class="flex flex-col sm:flex-row gap-4 items-center bg-gray-50 p-4 rounded-xl shadow-inner">
-                    <div class="flex-1 w-full">
-                        <label for="report-start-date" class="block text-sm font-medium text-gray-700 mb-1">시작일:</label>
-                        <input type="date" id="report-start-date" class="p-2 border border-gray-300 rounded-lg w-full shadow-sm focus:ring-indigo-500 focus:border-indigo-500">
-                    </div>
-                    <div class="flex-1 w-full">
-                        <label for="report-end-date" class="block text-sm font-medium text-gray-700 mb-1">종료일:</label>
-                        <input type="date" id="report-end-date" class="p-2 border border-gray-300 rounded-lg w-full shadow-sm focus:ring-indigo-500 focus:border-indigo-500">
-                    </div>
-                    <button id="report-search-button" 
-                            class="w-full sm:w-auto bg-blue-500 text-white py-2 px-6 rounded-xl hover:bg-blue-600 transition-colors duration-200 font-medium shadow-md self-end sm:mt-6">
-                        기록 조회
-                    </button>
-                    </div>
-                <div id="report-content" class="bg-white rounded-xl shadow-inner p-4 max-h-[60vh] overflow-y-auto">
-                    <p class="text-gray-500 text-center p-10" id="report-loading-message">
-                        저장된 기록을 불러오는 중...
-                    </p>
-                </div>
-            </div>
-            
-        </div>
-        
-    </div>
-
-    <div id="modal-container" class="hidden fixed inset-0 bg-gray-900 bg-opacity-50 z-50 flex items-center justify-center p-4" onclick="document.getElementById('modal-container').classList.add('hidden');">
-        <div id="modal-content" class="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm transform transition-all duration-300 scale-100" onclick="event.stopPropagation();">
-            <h3 id="modal-title" class="text-xl font-bold mb-3 text-red-600">제목</h3>
-            <p id="modal-message" class="text-gray-700 mb-4">메시지 내용</p>
-            <button onclick="document.getElementById('modal-container').classList.add('hidden');"
-                    class="w-full bg-indigo-600 text-white py-2 rounded-xl hover:bg-indigo-700 transition-colors duration-200 font-medium">
-                확인
-            </button>
-        </div>
-    </div>
-
-
-    <script>
+<script>
         // 전역 변수 설정
         let meals = [];
         const mealInput = {
@@ -230,6 +20,9 @@
             fat: document.getElementById('total-fat'),
         };
         const friendIdInput = document.getElementById('friend-user-id'); 
+        const reportSearchButton = document.getElementById('report-search-button');
+        const selfSearchButton = document.getElementById('self-search-button');
+
 
         // Firebase 인스턴스 (초기화 후 설정됨)
         let db, auth, userId, appId, initialAuthToken;
@@ -244,7 +37,6 @@
             modalTitle.textContent = title;
             modalMessage.textContent = message;
             
-            // 오류/성공 색상 변경
             if (isError) {
                 modalTitle.classList.remove('text-green-600');
                 modalTitle.classList.add('text-red-600');
@@ -254,12 +46,12 @@
             }
 
             container.classList.remove('hidden');
-            // 애니메이션 효과를 위해 잠시 후 scale을 조정
             content.classList.remove('scale-90', 'opacity-0');
             content.classList.add('scale-100', 'opacity-100');
         }
 
-        // Firebase 초기화 함수
+        // Firebase 초기화 함수 (생략... 이전 코드와 동일)
+
         async function initializeFirebase() {
             try {
                 const instances = window.getFirebaseInstances();
@@ -274,11 +66,9 @@
                 const app = window.initializeApp(firebaseConfig);
                 db = window.getFirestore(app);
                 auth = window.getAuth(app);
-                // window.setLogLevel('debug'); // 디버그 로그는 잠시 끕니다.
 
                 await window.setPersistence(auth, window.browserSessionPersistence);
 
-                // 4. 인증 처리 (커스텀 토큰 사용 또는 익명 로그인)
                 try {
                     if (initialAuthToken) {
                         await window.signInWithCustomToken(auth, initialAuthToken); 
@@ -286,8 +76,6 @@
                         await window.signInAnonymously(auth);
                     }
                 } catch (authError) {
-                    console.warn("인증 토큰 오류 발생, 익명 로그인 재시도:", authError);
-                    // 토큰이 만료되었거나 잘못된 경우, 익명 로그인으로 폴백
                     await window.signInAnonymously(auth);
                 }
 
@@ -305,10 +93,8 @@
                         statusMessage.classList.add('bg-green-100', 'text-green-600');
                         statusMessage.textContent = `✅ 데이터베이스 연결 완료 (User ID: ${userId.substring(0, 8)}...)`;
 
-                        // 인증 후 데이터 로드 시작
                         loadMealsForDate(mealInput.date.value);
                     } else {
-                         // 익명 로그인 실패 시 사용자에게 알림
                         userId = null;
                         userIdDisplay.textContent = '인증 실패';
                         statusMessage.classList.remove('bg-green-100', 'text-green-600', 'bg-yellow-100', 'text-yellow-600');
@@ -327,19 +113,17 @@
             }
         }
         
-        // ⭐️ Firestore 컬렉션 경로 생성 함수 (조회할 User ID를 인수로 받도록 수정) ⭐️
+        // Firestore 컬렉션 경로 생성 함수
         function getCollectionPath(targetUserId) {
             const id = targetUserId || userId; 
             if (!id) {
                 console.error("Target User ID is not defined.");
                 return null;
             }
-            // Private Data Path: /artifacts/{appId}/users/{userId}/daily_meals
             return `/artifacts/${appId}/users/${id}/daily_meals`;
         }
 
-
-        // 현재 날짜의 식단 데이터 로드
+        // 현재 날짜의 식단 데이터 로드 (생략... 이전 코드와 동일)
         async function loadMealsForDate(date) {
             meals = []; 
             renderMeals(); 
@@ -349,7 +133,6 @@
             }
 
             try {
-                // 저장 시에는 무조건 현재 사용자 ID를 사용
                 const collectionPath = getCollectionPath(userId);
                 if (!collectionPath) return;
 
@@ -369,8 +152,7 @@
             renderMeals();
         }
 
-
-        // 식단 목록 렌더링 및 합계 계산
+        // 식단 목록 렌더링 및 합계 계산 (생략... 이전 코드와 동일)
         function renderMeals() {
             mealsList.innerHTML = '';
             
@@ -415,34 +197,27 @@
                 });
             }
 
-            // 총 합계 업데이트
             totalsDisplay.kcal.textContent = totalKcal;
             totalsDisplay.carbs.textContent = totalCarbs;
             totalsDisplay.protein.textContent = totalProtein;
             totalsDisplay.fat.textContent = totalFat;
         }
 
-        // 식단 수정 함수
+        // 식단 수정/추가/삭제 (생략... 이전 코드와 동일)
+
         window.editMeal = function(index) {
             if (index < 0 || index >= meals.length) return;
-
             const mealToEdit = meals[index];
-
-            // 1. 입력 필드에 데이터 로드
             mealInput.name.value = mealToEdit.name;
             mealInput.kcal.value = mealToEdit.kcal;
             mealInput.carbs.value = mealToEdit.carbs;
             mealInput.protein.value = mealToEdit.protein;
             mealInput.fat.value = mealToEdit.fat;
             mealInput.name.focus();
-
-            // 2. 기존 항목을 목록에서 삭제 (수정 후 새로 추가할 예정)
             window.removeMeal(index);
-
             showModal("수정 모드", `${mealToEdit.name} 항목이 입력 필드에 로드되었습니다. 내용을 수정한 후 [+ 식단 추가] 버튼을 다시 누르세요.`, false);
         }
 
-        // 식단 추가
         window.addMeal = function() {
             const name = mealInput.name.value.trim();
             const kcal = parseInt(mealInput.kcal.value) || 0;
@@ -456,18 +231,11 @@
             }
 
             const newMeal = {
-                name,
-                kcal,
-                carbs,
-                protein,
-                fat,
-                timestamp: new Date().toISOString() // 입력 시간 기록
+                name, kcal, carbs, protein, fat, timestamp: new Date().toISOString() 
             };
-
             meals.push(newMeal);
             renderMeals();
 
-            // 입력 필드 초기화 (날짜는 그대로 둠)
             mealInput.name.value = '';
             mealInput.kcal.value = '';
             mealInput.carbs.value = '';
@@ -476,13 +244,12 @@
             mealInput.name.focus();
         }
 
-        // 식단 삭제
         window.removeMeal = function(index) {
             meals.splice(index, 1);
             renderMeals();
         }
 
-        // 식단 저장 (setDoc을 사용하여 날짜별로 덮어쓰기)
+        // 식단 저장 (생략... 이전 코드와 동일)
         async function saveTodaysMeals() {
             if (!db || !userId) {
                 showModal("저장 오류", "데이터베이스 연결이 준비되지 않았습니다. 잠시 후 다시 시도해 주세요.", true);
@@ -495,11 +262,9 @@
                 return;
             }
             
-            // 저장 시에는 무조건 현재 사용자 ID를 사용
             const collectionPath = getCollectionPath(userId);
             if (!collectionPath) return;
 
-            // 저장할 데이터 객체
             const dataToSave = {
                 meals: meals,
                 totalKcal: parseInt(totalsDisplay.kcal.textContent),
@@ -510,7 +275,6 @@
             };
 
             try {
-                // setDoc을 사용하여 해당 날짜 문서에 데이터 저장 (덮어쓰기)
                 const docRef = window.doc(db, collectionPath, date);
                 await window.setDoc(docRef, dataToSave);
 
@@ -523,7 +287,7 @@
         }
 
 
-        // 뷰 전환 기능
+        // 뷰 전환 기능 (생략... 이전 코드와 동일)
         window.switchView = function(viewName) {
             const dailyInputView = document.getElementById('daily-input-view');
             const reportView = document.getElementById('report-view');
@@ -539,7 +303,6 @@
                 tabReport.classList.remove('border-indigo-500', 'text-indigo-600');
                 tabReport.classList.add('border-transparent', 'text-gray-500');
 
-                // 일일 입력 뷰로 돌아오면 현재 날짜 데이터 다시 로드
                 loadMealsForDate(mealInput.date.value);
 
             } else if (viewName === 'report') {
@@ -551,12 +314,11 @@
                 tabDaily.classList.remove('border-indigo-500', 'text-indigo-600');
                 tabDaily.classList.add('border-transparent', 'text-gray-500');
 
-                // 보고서 뷰로 이동하면 기록 로드 시작
                 renderReport();
             }
         }
 
-        // ⭐️ 보고서 기록 조회 (친구 ID로 조회 가능하도록 수정된 핵심 함수) ⭐️
+        // ⭐️ 보고서 기록 조회 함수 (ID 참조를 더욱 명확히 함) ⭐️
         window.renderReport = async function() {
             const reportContent = document.getElementById('report-content');
             const loadingMessage = document.getElementById('report-loading-message');
@@ -570,7 +332,7 @@
 
             // 1. 조회할 사용자 ID 결정 (친구 ID 입력 필드를 먼저 확인)
             const targetFriendId = friendIdInput.value.trim();
-            const targetUserId = targetFriendId || userId; // 친구 ID가 있으면 친구 ID 사용, 없으면 본인 ID 사용
+            const targetUserId = targetFriendId || userId; 
             const isFriendView = !!targetFriendId; 
             
             const displayUserId = targetUserId ? targetUserId.substring(0, 8) + '...' : 'ID 없음';
@@ -599,11 +361,10 @@
             }
 
             try {
-                // 3. 컬렉션 경로 생성 (targetUserId를 getCollectionPath에 전달)
+                // 3. 컬렉션 경로 생성 및 쿼리
                 const collectionPath = getCollectionPath(targetUserId);
-                if (!collectionPath) return;
+                if (!collectionPath) return; // 경로가 유효한지 재확인
 
-                // 4. 쿼리 실행
                 const q = window.query(
                     window.collection(db, collectionPath),
                     window.where(window.documentId(), '>=', startDate),
@@ -615,10 +376,7 @@
                 const reportData = [];
                 querySnapshot.forEach((doc) => {
                     const data = doc.data();
-                    reportData.push({ 
-                        date: doc.id,
-                        ...data
-                    });
+                    reportData.push({ date: doc.id, ...data });
                 });
 
                 reportData.sort((a, b) => b.date.localeCompare(a.date));
@@ -630,7 +388,7 @@
                     return;
                 }
                 
-                // 5. 결과 렌더링
+                // 5. 결과 렌더링 (생략... 이전 코드와 동일)
                 reportContent.innerHTML = `<h3 class="text-xl font-bold text-gray-700 mb-4">${viewTitle}</h3>`;
 
                 reportData.forEach(day => {
@@ -674,19 +432,17 @@
                 reportContent.innerHTML = `<p class="text-red-500 text-center p-10">
                     ❌ 기록을 불러오는 중 오류가 발생했습니다: ${error.message}
                     <br><br>
-                    (친구가 본인의 ID를 정확히 입력했고, Firestore 규칙이 **읽기 권한을 허용**하는지 확인하세요.)
+                    (가장 일반적인 원인은 **Firebase 보안 규칙**의 **read** 권한 부족입니다.)
                 </p>`;
             }
         }
 
 
-        // 이벤트 리스너
+        // 이벤트 리스너 (생략... 이전 코드와 동일)
         window.onload = function() {
-            // 날짜 입력 필드의 기본값을 오늘 날짜로 설정
             const today = new Date().toISOString().substring(0, 10);
             mealInput.date.value = today;
 
-            // 보고서 날짜 기본값 설정 (이번 달 1일 ~ 오늘)
             const reportStartDate = document.getElementById('report-start-date');
             const reportEndDate = document.getElementById('report-end-date');
             const firstDayOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().substring(0, 10);
@@ -694,22 +450,18 @@
             if(reportStartDate) reportStartDate.value = firstDayOfMonth;
             if(reportEndDate) reportEndDate.value = today;
             
-            // 1. 날짜 변경 시 해당 날짜 데이터 로드
             mealInput.date.addEventListener('change', (e) => loadMealsForDate(e.target.value));
-
-            // 2. 버튼 클릭 이벤트 리스너 연결
             mealInput.addButton.addEventListener('click', window.addMeal);
             saveButton.addEventListener('click', saveTodaysMeals);
             
-            // ⭐️ 보고서 조회 버튼에 직접 이벤트 리스너 연결 ⭐️
-            document.getElementById('report-search-button').addEventListener('click', window.renderReport);
-            document.getElementById('self-search-button').addEventListener('click', () => {
-                friendIdInput.value = '';
+            // ⭐️ 보고서 조회 버튼에 명확한 이벤트 리스너 연결 ⭐️
+            reportSearchButton.addEventListener('click', window.renderReport);
+            selfSearchButton.addEventListener('click', () => {
+                friendIdInput.value = ''; // 본인 조회 버튼 클릭 시 ID 필드를 비움
                 window.renderReport();
             });
             // ⭐️ ----------------------------------- ⭐️
             
-            // 3. Firebase 초기화 및 인증 시작
             initializeFirebase();
         };
 
