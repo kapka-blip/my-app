@@ -161,510 +161,464 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, onSnapshot, collection, query, orderBy, serverTimestamp, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        
+        import { getFirestore, doc, setDoc, onSnapshot, collection, query, serverTimestamp, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { QueryConstraint, limit, orderBy, where, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js"; // orderBy 추가
+
         // --- 0. 전역 설정 및 변수 선언 ---
-        
+
         // 🚨 중요: 여기에 사용자님의 실제 Firebase Config 값을 붙여넣어 주세요! 
-                    const manualFirebaseConfig = {
+        const manualFirebaseConfig = {
               apiKey: "AIzaSyCjyTrnhFuGV8PVD3mtMj9ZD7DFX4J3s",
               authDomain: "meal-tracker-f2644.firebaseapp.com",
               projectId: "meal-tracker-f2644",
               storageBucket: "meal-tracker-f2644.appspot.com",
               messagingSenderId: "739384992411",
               appId: "1:739384992411:web:1e47f734197cd6dff89c3e"
-            };  // 여기에 사용자 Firebase Config 값 붙여넣기
+            };
 
         // Firebase 전역 변수 (GitHub Pages 환경을 위한 수동 설정)
-        const appId = manualFirebaseConfig ? manualFirebaseConfig.projectId : 'default-app-id';
-        const firebaseConfig = manualFirebaseConfig;
-        
-        // 캔버스 환경이 아니므로 초기 토큰은 사용하지 않습니다.
-        const initialAuthToken = null; 
+        const __app_id = 'diet_calculator'; 
+        const __firebase_config = JSON.stringify(manualFirebaseConfig);
+        const __initial_auth_token = ''; // GitHub Pages에서는 사용하지 않으므로 빈 문자열로 둡니다.
 
-        // Firebase State
-        let app;
-        let db;
-        let auth;
-        let userId = null;
-        let isAuthReady = false;
-        let dailyRecords = []; // 저장된 일일 기록 데이터
+        let db = null;
+        let auth = null;
+        let isCloudEnabled = false;
+        let userId = 'local-anonymous-user-' + crypto.randomUUID(); // 클라우드 비활성화 시 사용될 임시 ID
 
-        // HTML 요소 선택 (이하 생략 - 이전 코드와 동일)
-        const mealForm = document.getElementById('meal-form');
-        const mealDateInput = document.getElementById('meal-date');
-        const mealNameInput = document.getElementById('meal-name');
-        const kcalInput = document.getElementById('kcal');
-        const carbsInput = document.getElementById('carbs');
-        const proteinInput = document.getElementById('protein');
-        const fatInput = document.getElementById('fat');
-        const totalKcalEl = document.getElementById('total-kcal');
-        const totalCarbsEl = document.getElementById('total-carbs');
-        const totalProteinEl = document.getElementById('total-protein');
-        const totalFatEl = document.getElementById('total-fat');
+        // UI 요소
+        const mealInput = {
+            date: document.getElementById('meal-date'),
+            name: document.getElementById('meal-name'),
+            kcal: document.getElementById('meal-kcal'),
+            carbs: document.getElementById('meal-carbs'),
+            protein: document.getElementById('meal-protein'),
+            fat: document.getElementById('meal-fat'),
+            addButton: document.getElementById('add-meal')
+        };
+        const summary = {
+            kcal: document.getElementById('summary-kcal'),
+            carbs: document.getElementById('summary-carbs'),
+            protein: document.getElementById('summary-protein'),
+            fat: document.getElementById('summary-fat')
+        };
+        const statusMessage = document.getElementById('status-message');
         const mealList = document.getElementById('meal-list');
-        const initialExampleRow = document.getElementById('initial-example');
-        const submitButton = document.getElementById('submit-button');
+        const totalRecordList = document.getElementById('total-record-list');
+        const saveButton = document.getElementById('save-button');
+        const loadingIndicator = document.getElementById('loading-indicator');
 
-        // 앱 상태 (미저장 식단)
-        let meals = []; 
-        let editingMealId = null; 
-        
-        // 로컬 저장소 키
-        const LOCAL_STORAGE_KEY = 'unsavedMeals'; 
+        // 상태
+        let meals = loadLocalMeals(); // 미저장 식단
+        let totalRecords = {}; // 날짜별 저장 기록
 
-        // 페이지 로드 시 오늘 날짜 설정 및 예시 행 숨기기
-        mealDateInput.valueAsDate = new Date();
-        if (initialExampleRow) {
-            initialExampleRow.style.display = 'none';
+        // --- 1. Firebase 초기화 및 인증 ---
+
+        function updateStatus(message, isError = false) {
+            statusMessage.innerHTML = message;
+            statusMessage.className = isError ? 'text-red-600' : 'text-gray-600';
+            console.log(`STATUS: ${message}`);
         }
 
-        // --- 1. 유틸리티 및 UI 함수 ---
-        
-        /** Custom Alert/Modal Function (경고 메시지용) */
-        function showCustomAlert(title, message, color, isHtml = false) {
-            const existingModal = document.querySelector('.fixed.inset-0.bg-gray-600.bg-opacity-50.z-50');
-            if (existingModal) existingModal.remove(); // 기존 모달 제거
-            
-            const messageBox = document.createElement('div');
-            messageBox.classList.add('fixed', 'inset-0', 'bg-gray-600', 'bg-opacity-50', 'flex', 'items-center', 'justify-center', 'z-50');
-            
-            const colorClass = {
-                'red': { header: 'text-red-600', button: 'bg-red-600 hover:bg-red-700' },
-                'green': { header: 'text-green-600', button: 'bg-green-600 hover:bg-green-700' },
-                'blue': { header: 'text-blue-600', button: 'bg-blue-600 hover:bg-blue-700' }
-            }[color || 'blue'];
-            
-            const content = isHtml ? message : `<p class="text-gray-700 mb-6">${message}</p>`;
-
-            messageBox.innerHTML = `
-                <div class="bg-white p-6 rounded-xl shadow-2xl max-w-lg w-11/12 transform transition-all">
-                    <h3 class="text-xl font-bold ${colorClass.header} mb-4">${title}</h3>
-                    <div class="mb-6">${content}</div>
-                    <button class="w-full px-4 py-2 ${colorClass.button} text-white font-semibold rounded-lg" onclick="this.parentNode.parentNode.remove()">닫기</button>
-                </div>
-            `;
-            document.body.appendChild(messageBox);
-        }
-
-        /** 미저장 식단 로컬 저장소에 저장 */
-        function saveMealsToLocal() {
-            try {
-                localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(meals));
-            } catch (e) {
-                console.error("로컬 저장소 저장 실패:", e);
-                showCustomAlert("저장 경고", "브라우저 로컬 저장소에 데이터를 저장할 수 없습니다.", "red");
-            }
-        }
-
-        /** 미저장 식단 로컬 저장소에서 로드 */
-        function loadMealsFromLocal() {
-            try {
-                const storedMeals = localStorage.getItem(LOCAL_STORAGE_KEY);
-                if (storedMeals) {
-                    meals = JSON.parse(storedMeals);
-                } else {
-                    meals = [];
-                }
-            } catch (e) {
-                console.error("로컬 저장소 로드 실패:", e);
-                meals = [];
-            }
-        }
-        
-        /** 총합계 업데이트 함수 */
-        function updateTotals() {
-            const totalKcal = meals.reduce((sum, meal) => sum + meal.kcal, 0);
-            const totalCarbs = meals.reduce((sum, meal) => sum + meal.carbs, 0);
-            const totalProtein = meals.reduce((sum, meal) => sum + meal.protein, 0);
-            const totalFat = meals.reduce((sum, meal) => sum + meal.fat, 0);
-
-            totalKcalEl.textContent = totalKcal.toFixed(0);
-            totalCarbsEl.textContent = totalCarbs.toFixed(0);
-            totalProteinEl.textContent = totalProtein.toFixed(0);
-            totalFatEl.textContent = totalFat.toFixed(0);
-        }
-        
-        /** 미저장 식단 목록 렌더링 함수 */
-        function renderMealList() {
-            mealList.innerHTML = '';
-
-            meals.forEach(meal => {
-                const newRow = document.createElement('tr');
-                if (editingMealId === meal.id) {
-                    newRow.classList.add('bg-yellow-100', 'border-yellow-500', 'border');
-                }
-                newRow.innerHTML = `
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${meal.date}</td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${meal.name}</td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-right">${meal.kcal}</td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-right">${meal.carbs}</td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-right">${meal.protein}</td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-right">${meal.fat}</td>
-                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
-                        <button type="button" onclick="window.editMeal(${meal.id})" class="text-indigo-600 hover:text-indigo-900">수정</button>
-                        <button type="button" onclick="window.deleteMeal(${meal.id})" class="text-red-600 hover:text-red-900">삭제</button>
-                    </td>
-                `;
-                mealList.appendChild(newRow);
-            });
-            
-            if (meals.length === 0 && initialExampleRow) {
-                initialExampleRow.style.display = 'table-row';
-            } else if (initialExampleRow) {
-                initialExampleRow.style.display = 'none';
-            }
-            saveMealsToLocal(); // 렌더링 후 로컬 저장
-        }
-
-        // --- 2. 데이터 관리 함수 (CRUD for current meals) ---
-
-        /** 수정 모드 진입 함수 */
-        window.editMeal = function(id) {
-            editingMealId = id;
-            const meal = meals.find(m => m.id === id);
-
-            if (meal) {
-                // 폼에 데이터 채우기
-                mealDateInput.value = meal.date;
-                mealNameInput.value = meal.name;
-                kcalInput.value = meal.kcal;
-                carbsInput.value = meal.carbs;
-                proteinInput.value = meal.protein;
-                fatInput.value = meal.fat;
-
-                // 버튼 텍스트와 스타일 변경
-                submitButton.textContent = '변경 사항 저장';
-                submitButton.classList.remove('bg-blue-600', 'hover:bg-blue-700');
-                submitButton.classList.add('bg-indigo-600', 'hover:bg-indigo-700');
-                
-                renderMealList(); // 수정 중인 행 하이라이트
-                mealNameInput.focus();
-            }
-        }
-        
-        /** 식단 삭제 확인 메시지 표시 함수 */
-        window.deleteMeal = function(id) {
-            const mealToDelete = meals.find(m => m.id === id);
-            if (!mealToDelete) return;
-
-            const messageHtml = `
-                <p class="text-gray-700 mb-6">정말로 **${mealToDelete.name}** 식단을 삭제하시겠습니까?</p>
-                <div class="flex justify-end space-x-3">
-                    <button class="px-4 py-2 text-gray-700 font-semibold rounded-lg border border-gray-300 hover:bg-gray-100" onclick="this.parentNode.parentNode.parentNode.remove()">취소</button>
-                    <button class="px-4 py-2 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-700" onclick="window.confirmDelete(${id})">삭제</button>
-                </div>
-            `;
-            showCustomAlert("식단 삭제 확인", messageHtml, "red", true);
-        }
-        
-        /** 식단 삭제 실행 함수 */
-        window.confirmDelete = function(id) {
-            // 모달 닫기
-            const messageBox = document.querySelector('.fixed.inset-0.bg-gray-600.bg-opacity-50');
-            if (messageBox) messageBox.remove();
-            
-            meals = meals.filter(meal => meal.id !== id);
-
-            // UI 업데이트
-            updateTotals();
-            renderMealList();
-            
-            // 수정 모드 해제 및 폼 초기화
-            if (editingMealId === id) {
-                editingMealId = null;
-                submitButton.textContent = '추가';
-                submitButton.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
-                submitButton.classList.add('bg-blue-600', 'hover:bg-blue-700');
-                
-                mealNameInput.value = '';
-                kcalInput.value = '';
-                carbsInput.value = '';
-                proteinInput.value = '';
-                fatInput.value = '';
-                mealDateInput.valueAsDate = new Date(); 
-            }
-            
-            setTimeout(() => { mealNameInput.focus(); }, 0);
-        }
-
-        // --- 3. Firebase 및 기록 관리 함수 ---
-
-        /** Firebase 초기화 및 인증 */
+        // Firebase를 초기화하는 핵심 로직 (수정됨)
         async function initializeFirebase() {
-            if (!firebaseConfig) {
-                document.getElementById('user-info').textContent = "Firebase 설정 오류 (클라우드 저장 비활성화)";
-                console.error("Firebase configuration is missing. Data saving/loading will not work.");
-                isAuthReady = false; 
-                return;
-            }
-
             try {
-                // setLogLevel('debug'); // 디버그 로그 필요 시 활성화
-                app = initializeApp(firebaseConfig);
+                const firebaseConfig = JSON.parse(__firebase_config);
+                
+                // Config가 유효하지 않으면 클라우드 비활성화
+                if (!firebaseConfig || !firebaseConfig.apiKey || firebaseConfig.apiKey.length < 10) {
+                    throw new Error("Missing or invalid Firebase configuration.");
+                }
+
+                // Config가 유효할 경우에만 초기화 진행
+                const app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
                 auth = getAuth(app);
                 
-                // 익명 인증 시도
-                const userCredential = await signInAnonymously(auth);
-                const currentUser = userCredential.user;
-                
-                if (currentUser) {
-                    userId = currentUser.uid;
-                } else {
-                    userId = 'local-anonymous-user-' + crypto.randomUUID(); 
+                // Firestore 로그 레벨 설정 (디버깅용)
+                setLogLevel('error'); // 배포 시에는 'error'로 설정하여 불필요한 로그를 줄입니다.
+
+                // 익명 인증 및 사용자 상태 감지
+                await new Promise(resolve => {
+                    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+                        if (!user) {
+                            // 익명 로그인 시도
+                            try {
+                                const userCredential = await signInAnonymously(auth);
+                                userId = userCredential.user.uid;
+                                updateStatus(`ID: ${userId} (클라우드 연결됨)`, false);
+                                isCloudEnabled = true;
+                            } catch (error) {
+                                console.error("Firebase 익명 로그인 실패:", error);
+                                updateStatus('Firebase 인증 실패. 클라우드 저장 비활성화.', true);
+                                isCloudEnabled = false;
+                            }
+                        } else {
+                            userId = user.uid;
+                            updateStatus(`ID: ${userId} (클라우드 연결됨)`, false);
+                            isCloudEnabled = true;
+                        }
+                        unsubscribe(); // 초기 인증 확인 후 리스너 해제
+                        resolve();
+                    });
+                });
+
+                if (isCloudEnabled) {
+                    setupCloudListeners();
                 }
-                
-                isAuthReady = true;
-                console.log("Firebase Auth Ready. User ID:", userId);
-                document.getElementById('user-info').textContent = `사용자 ID: ${userId} (클라우드 연결됨)`;
-                
-                if (userId) {
-                    fetchDailyRecords();
-                }
-                
-            } catch (error) {
-                console.error("Error initializing Firebase or signing in:", error);
-                // 오류 발생 시 로컬 ID로 전환
-                userId = 'local-anonymous-user-' + crypto.randomUUID();
-                isAuthReady = false;
-                document.getElementById('user-info').textContent = `Firebase 오류. (ID: ${userId}) 클라우드 저장 비활성화.`;
-                showCustomAlert("Firebase 연결 오류", "Firebase 설정 또는 네트워크 문제로 클라우드 데이터 저장이 불가능합니다. 로컬 임시 저장소는 작동합니다.", "red");
+            } catch (e) {
+                console.error("Firebase 초기화 중 치명적인 오류 발생:", e);
+                updateStatus(`Firebase 설정 오류. (ID: ${userId} / 클라우드 저장 비활성화)`, true);
+                showErrorModal("Firebase 연결 오류", "Firebase 설정 또는 네트워크 문제로 클라우드 데이터 저장이 불가능합니다. 로그인이 필수적인 기능이므로, 로컬 임시 저장소는 작동합니다.");
+                isCloudEnabled = false;
             }
         }
+
+        // --- 2. 로컬 저장소 (Local Storage) 기능 ---
         
-        /** 일일 기록 컬렉션 참조 반환 */
-        function getDailyRecordsCollectionRef() {
-            if (!db || !userId || !firebaseConfig) return null;
-            // Private collection path: /artifacts/{appId}/users/{userId}/daily_summaries
-            return collection(db, 'artifacts', appId, 'users', userId, 'daily_summaries');
+        // ... (loadLocalMeals, saveLocalMeals, etc.는 동일)
+        function loadLocalMeals() {
+            const data = localStorage.getItem('localMeals');
+            return data ? JSON.parse(data) : [];
         }
 
-        /** 오늘의 식단 최종 저장 (클라우드) */
-        window.saveDailyRecord = async function() {
-            if (!firebaseConfig) {
-                 showCustomAlert("클라우드 저장 실패", "Firebase 설정이 누락되어 클라우드 저장이 불가능합니다. (오류 메시지 참고)", "red");
-                 return;
-            }
-            if (!isAuthReady) {
-                showCustomAlert("저장 오류", "사용자 인증이 완료되지 않았습니다. 잠시 후 다시 시도해주세요.", "red");
-                return;
-            }
-            if (meals.length === 0) {
-                showCustomAlert("저장 오류", "저장할 식단이 없습니다. 식단을 먼저 추가해주세요.", "red");
-                return;
-            }
+        function saveLocalMeals() {
+            localStorage.setItem('localMeals', JSON.stringify(meals));
+        }
 
-            // 총합계 계산
-            const totals = {
-                kcal: meals.reduce((sum, meal) => sum + meal.kcal, 0),
-                carbs: meals.reduce((sum, meal) => sum + meal.carbs, 0),
-                protein: meals.reduce((sum, meal) => sum + meal.protein, 0),
-                fat: meals.reduce((sum, meal) => sum + meal.fat, 0),
-            };
+
+        // --- 3. 클라우드 저장소 (Firestore) 기능 ---
+        
+        // Firestore 데이터베이스 경로 설정
+        function getCollectionPath() {
+            // Firestore 규칙에 따라 사용자별로 데이터를 저장합니다.
+            return `artifacts/${__app_id}/users/${userId}/meal_records`;
+        }
+
+        // Firestore 리스너 설정
+        function setupCloudListeners() {
+            if (!isCloudEnabled || !db) return;
+
+            // 1. 날짜별 총합계 기록 리스너
+            const totalQuery = query(collection(db, getCollectionPath()));
+
+            onSnapshot(totalQuery, (snapshot) => {
+                loadingIndicator.textContent = "저장된 일일 기록을 불러오는 중... (클라우드)";
+                totalRecords = {};
+                snapshot.forEach((doc) => {
+                    const data = doc.data();
+                    const date = doc.id; // 문서 ID를 날짜로 사용
+                    totalRecords[date] = {
+                        kcal: data.totalKcal,
+                        carbs: data.totalCarbs,
+                        protein: data.totalProtein,
+                        fat: data.totalFat
+                    };
+                });
+                renderTotalRecords();
+                loadingIndicator.textContent = "";
+            }, (error) => {
+                console.error("클라우드 기록 리스너 오류:", error);
+                loadingIndicator.textContent = "클라우드 기록을 불러오는 중 오류 발생.";
+            });
+        }
+
+
+        // 최종 저장 함수 (로컬 -> 클라우드)
+        async function saveTodaysMeals() {
+            if (!isCloudEnabled || !db) {
+                showErrorModal("저장 불가", "클라우드 저장 기능이 활성화되지 않았습니다. Firebase 설정을 완료하고 페이지를 새로고침하세요.");
+                return;
+            }
             
-            const recordDate = mealDateInput.value;
-            
-            const record = {
-                date: recordDate,
-                timestamp: serverTimestamp(),
-                totals: totals,
-                meals: JSON.parse(JSON.stringify(meals)), // 깊은 복사
-            };
-            
-            const collectionRef = getDailyRecordsCollectionRef();
-            if (!collectionRef) {
-                showCustomAlert("오류", "데이터베이스 연결에 문제가 있습니다.", "red");
+            if (meals.length === 0) {
+                showErrorModal("경고", "저장할 식단 기록이 없습니다.");
                 return;
             }
 
             try {
-                // 날짜를 document ID로 사용하여 덮어쓰기 방지
-                await setDoc(doc(collectionRef, recordDate), record);
+                // 당일 날짜 계산
+                const today = new Date().toISOString().substring(0, 10);
                 
-                showCustomAlert("저장 완료", `${recordDate}의 식단 기록 (${totals.kcal.toFixed(0)} Kcal)이 성공적으로 클라우드에 저장되었습니다.`, "green");
-                
-                // 저장 후 현재 식단 목록 초기화
-                meals = [];
-                localStorage.removeItem(LOCAL_STORAGE_KEY); // 로컬 임시 저장소도 비움
-                updateTotals();
-                renderMealList();
-                
-            } catch (e) {
-                console.error("Error saving document: ", e);
-                showCustomAlert("저장 실패", "데이터 저장 중 오류가 발생했습니다. (Firebase 보안 규칙 또는 네트워크 문제)", "red");
-            }
-        }
+                // 총합계 계산
+                const totals = meals.reduce((acc, meal) => {
+                    acc.totalKcal += meal.kcal;
+                    acc.totalCarbs += meal.carbs;
+                    acc.totalProtein += meal.protein;
+                    acc.totalFat += meal.fat;
+                    return acc;
+                }, { totalKcal: 0, totalCarbs: 0, totalProtein: 0, totalFat: 0 });
 
-        /** 일일 기록 실시간 불러오기 */
-        function fetchDailyRecords() {
-            const collectionRef = getDailyRecordsCollectionRef();
-            if (!collectionRef || !isAuthReady || !firebaseConfig) {
-                document.getElementById('daily-records-list').innerHTML = `
-                    <tr><td colspan="6" class="px-6 py-4 text-center text-gray-500 italic">클라우드 데이터 연결 오류로 기록을 불러올 수 없습니다.</td></tr>
-                `;
-                return;
-            }
+                // Firestore에 문서 ID를 날짜로 사용하여 저장
+                const mealDocRef = doc(db, getCollectionPath(), today);
 
-            // 날짜(date) 기준으로 내림차순 정렬
-            const q = query(collectionRef, orderBy("date", "desc"));
-
-            onSnapshot(q, (snapshot) => {
-                dailyRecords = [];
-                snapshot.forEach((doc) => {
-                    const data = doc.data();
-                    dailyRecords.push({ id: doc.id, ...data }); 
+                await setDoc(mealDocRef, {
+                    meals: meals, // 모든 상세 식단 기록
+                    totalKcal: totals.totalKcal,
+                    totalCarbs: totals.totalCarbs,
+                    totalProtein: totals.totalProtein,
+                    totalFat: totals.totalFat,
+                    timestamp: serverTimestamp()
                 });
-                renderDailyRecords();
-            }, (error) => {
-                console.error("Error fetching daily records:", error);
-                document.getElementById('daily-records-list').innerHTML = `
-                    <tr><td colspan="6" class="px-6 py-4 text-center text-red-500 italic">기록 불러오기 오류: ${error.code}</td></tr>
-                `;
-            });
+
+                // 저장 성공 시 미저장 식단 목록 초기화
+                meals = [];
+                saveLocalMeals();
+                renderMeals();
+                showErrorModal("성공", `${today} 식단 기록이 클라우드에 성공적으로 저장되었습니다.`);
+
+            } catch (e) {
+                console.error("클라우드 저장 중 오류 발생:", e);
+                showErrorModal("저장 실패", "클라우드에 데이터를 저장하는 중 오류가 발생했습니다. 네트워크 또는 Firebase 설정을 확인하세요.");
+            }
+        }
+        
+        // 상세 기록 로드 함수
+        async function loadMealDetails(date) {
+            if (!isCloudEnabled || !db) {
+                showErrorModal("조회 불가", "클라우드 연결이 활성화되지 않아 상세 기록을 볼 수 없습니다.");
+                return [];
+            }
+            try {
+                const docRef = doc(db, getCollectionPath(), date);
+                const docSnap = await getDoc(docRef);
+
+                if (docSnap.exists()) {
+                    return docSnap.data().meals || [];
+                } else {
+                    showErrorModal("오류", `${date}의 상세 기록을 찾을 수 없습니다.`);
+                    return [];
+                }
+            } catch (e) {
+                console.error("상세 기록 로드 오류:", e);
+                showErrorModal("오류", "상세 기록을 불러오는 중 오류가 발생했습니다.");
+                return [];
+            }
         }
 
-        /** 저장된 일일 기록 목록 렌더링 */
-        function renderDailyRecords() {
-            const recordsListEl = document.getElementById('daily-records-list');
-            recordsListEl.innerHTML = '';
-            
-            if (dailyRecords.length === 0) {
-                recordsListEl.innerHTML = `
-                    <tr><td colspan="6" class="px-6 py-4 text-center text-gray-500 italic">저장된 일일 기록이 없습니다.</td></tr>
-                `;
+
+        // --- 4. 렌더링 및 UI 기능 ---
+
+        // ... (addMeal, deleteMeal, renderMeals, renderTotalRecords, etc.는 동일)
+        function calculateSummary() {
+            const totals = meals.reduce((acc, meal) => {
+                acc.kcal += meal.kcal;
+                acc.carbs += meal.carbs;
+                acc.protein += meal.protein;
+                acc.fat += meal.fat;
+                return acc;
+            }, { kcal: 0, carbs: 0, protein: 0, fat: 0 });
+
+            summary.kcal.textContent = totals.kcal;
+            summary.carbs.textContent = totals.carbs;
+            summary.protein.textContent = totals.protein;
+            summary.fat.textContent = totals.fat;
+        }
+        
+        // 미저장 식단 렌더링
+        function renderMeals() {
+            calculateSummary();
+            mealList.innerHTML = '';
+
+            if (meals.length === 0) {
+                const row = document.createElement('tr');
+                row.innerHTML = `<td colspan="7" class="py-4 text-center text-gray-500">오늘의 식단을 추가해 주세요.</td>`;
+                mealList.appendChild(row);
                 return;
             }
 
-            dailyRecords.forEach(record => {
+            meals.forEach((meal, index) => {
                 const row = document.createElement('tr');
-                row.classList.add('hover:bg-gray-50');
-                
+                row.className = 'border-b text-sm';
                 row.innerHTML = `
-                    <td class="px-6 py-4 whitespace-nowrap text-sm font-semibold text-gray-900">${record.date}</td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700 text-right">${record.totals.kcal.toFixed(0)}</td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700 text-right">${record.totals.carbs.toFixed(0)}</td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700 text-right">${record.totals.protein.toFixed(0)}</td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700 text-right">${record.totals.fat.toFixed(0)}</td>
-                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                        <button type="button" onclick="window.viewDetails('${record.id}')" class="text-blue-600 hover:text-blue-900">상세 보기</button>
+                    <td class="px-2 py-2">${meal.date}</td>
+                    <td class="px-2 py-2">${meal.name}</td>
+                    <td class="px-2 py-2">${meal.kcal}</td>
+                    <td class="px-2 py-2">${meal.carbs} (G)</td>
+                    <td class="px-2 py-2">${meal.protein} (G)</td>
+                    <td class="px-2 py-2">${meal.fat} (G)</td>
+                    <td class="px-2 py-2 space-x-2 whitespace-nowrap">
+                        <button onclick="editMeal(${index})" class="text-blue-500 hover:text-blue-700 text-xs">수정</button>
+                        <button onclick="deleteMeal(${index})" class="text-red-500 hover:text-red-700 text-xs">삭제</button>
                     </td>
                 `;
-                recordsListEl.appendChild(row);
+                mealList.appendChild(row);
             });
+            saveLocalMeals();
         }
 
-        /** 상세 기록 보기 */
-        window.viewDetails = function(recordId) {
-            const record = dailyRecords.find(r => r.id === recordId);
-            if (!record) return;
-
-            let mealDetailsHtml = `
-                <h3 class="text-xl font-bold text-gray-800 mb-4">${record.date} 상세 식단 기록</h3>
-                <p class="mb-4 text-sm text-gray-600">
-                    <span class="font-bold text-blue-600">Kcal ${record.totals.kcal.toFixed(0)}</span> | 
-                    탄수 ${record.totals.carbs.toFixed(0)}g | 
-                    단백 ${record.totals.protein.toFixed(0)}g | 
-                    지방 ${record.totals.fat.toFixed(0)}g
-                </p>
-                <div class="overflow-y-auto max-h-64 border rounded-lg">
-                <table class="min-w-full divide-y divide-gray-200">
-                    <thead class="bg-gray-50">
-                        <tr>
-                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500">식단명</th>
-                            <th class="px-4 py-2 text-right text-xs font-medium text-gray-500">Kcal</th>
-                            <th class="px-4 py-2 text-right text-xs font-medium text-gray-500">탄 (g)</th>
-                            <th class="px-4 py-2 text-right text-xs font-medium text-gray-500">단 (g)</th>
-                            <th class="px-4 py-2 text-right text-xs font-medium text-gray-500">지 (g)</th>
-                        </tr>
-                    </thead>
-                    <tbody class="bg-white divide-y divide-gray-200">
-            `;
-
-            record.meals.forEach(meal => {
-                mealDetailsHtml += `
-                    <tr>
-                        <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-900">${meal.name}</td>
-                        <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-700 text-right">${meal.kcal}</td>
-                        <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-700 text-right">${meal.carbs}</td>
-                        <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-700 text-right">${meal.protein}</td>
-                        <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-700 text-right">${meal.fat}</td>
-                    </tr>
-                `;
-            });
+        // 저장된 기록 렌더링
+        function renderTotalRecords() {
+            totalRecordList.innerHTML = '';
+            const dates = Object.keys(totalRecords).sort().reverse();
             
-            mealDetailsHtml += `
-                    </tbody>
-                </table>
-                </div>
-            `;
-
-            showCustomAlert(`${record.date} 상세 기록`, mealDetailsHtml, "blue", true);
-        }
-
-        // --- 4. 이벤트 리스너 및 초기화 ---
-
-        // 폼 제출 핸들러 (추가/수정 로직)
-        mealForm.addEventListener('submit', function(event) {
-            event.preventDefault();
-
-            // Firebase 인증 상태는 더 이상 추가 버튼의 필수 조건이 아님 (로컬 저장소 때문)
-            // if (!isAuthReady) {
-            //     showCustomAlert("오류", "사용자 인증이 완료되지 않아 데이터를 저장할 수 없습니다.", "red");
-            //     return;
-            // }
-
-            const newMealData = {
-                date: mealDateInput.value,
-                name: mealNameInput.value.trim(),
-                kcal: parseFloat(kcalInput.value) || 0,
-                carbs: parseFloat(carbsInput.value) || 0,
-                protein: parseFloat(proteinInput.value) || 0,
-                fat: parseFloat(fatInput.value) || 0,
-            };
-            
-            if (!newMealData.name) {
-                showCustomAlert("입력 오류", "식단명을 입력해주세요.", "red");
-                mealNameInput.focus();
+            if (dates.length === 0) {
+                const row = document.createElement('tr');
+                row.innerHTML = `<td colspan="6" class="py-4 text-center text-gray-500">클라우드에 저장된 기록이 없습니다.</td>`;
+                totalRecordList.appendChild(row);
                 return;
             }
 
+            dates.forEach((date) => {
+                const record = totalRecords[date];
+                const row = document.createElement('tr');
+                row.className = 'border-b text-sm';
+                row.innerHTML = `
+                    <td class="px-2 py-2">${date}</td>
+                    <td class="px-2 py-2">${record.kcal}</td>
+                    <td class="px-2 py-2">${record.carbs} (G)</td>
+                    <td class="px-2 py-2">${record.protein} (G)</td>
+                    <td class="px-2 py-2">${record.fat} (G)</td>
+                    <td class="px-2 py-2 whitespace-nowrap">
+                        <button onclick="showDetails('${date}')" class="text-teal-500 hover:text-teal-700 text-xs">상세</button>
+                    </td>
+                `;
+                totalRecordList.appendChild(row);
+            });
+        }
+        
+        // 상세 기록 모달 표시
+        async function showDetails(date) {
+            const modalBody = document.getElementById('details-modal-body');
+            const modalTitle = document.getElementById('details-modal-title');
+            
+            modalTitle.textContent = `${date} 식단 상세 기록`;
+            modalBody.innerHTML = `<p class="text-center text-gray-500">상세 기록을 불러오는 중...</p>`;
+            document.getElementById('details-modal').classList.remove('hidden');
 
-            if (editingMealId) {
-                const index = meals.findIndex(m => m.id === editingMealId);
-                if (index !== -1) {
-                    meals[index] = { ...meals[index], ...newMealData }; 
-                }
+            const details = await loadMealDetails(date);
 
-                editingMealId = null;
-                submitButton.textContent = '추가';
-                submitButton.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
-                submitButton.classList.add('bg-blue-600', 'hover:bg-blue-700');
-
-            } else {
-                newMealData.id = Date.now(); 
-                meals.push(newMealData);
+            if (details.length === 0) {
+                 modalBody.innerHTML = `<p class="text-center text-red-500">기록을 불러올 수 없거나 상세 기록이 없습니다.</p>`;
+                 return;
             }
 
-            updateTotals();
-            renderMealList(); // 이 함수 내에서 로컬 저장 실행
+            let html = `<table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">식단명</th>
+                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Kcal</th>
+                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">탄수화물(G)</th>
+                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">단백질(G)</th>
+                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">지방(G)</th>
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white divide-y divide-gray-200">`;
 
-            mealNameInput.value = '';
-            kcalInput.value = '';
-            carbsInput.value = '';
-            proteinInput.value = '';
-            fatInput.value = '';
+            details.forEach(meal => {
+                html += `<tr>
+                            <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-900">${meal.name}</td>
+                            <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-900">${meal.kcal}</td>
+                            <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-900">${meal.carbs}</td>
+                            <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-900">${meal.protein}</td>
+                            <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-900">${meal.fat}</td>
+                         </tr>`;
+            });
+            
+            html += `</tbody></table>`;
+            modalBody.innerHTML = html;
+        }
 
-            setTimeout(() => { mealNameInput.focus(); }, 0);
-        });
+        // 모달 닫기
+        window.closeModal = function() {
+            document.getElementById('details-modal').classList.add('hidden');
+            document.getElementById('error-modal').classList.add('hidden');
+            // 수정 모달 닫기
+            document.getElementById('edit-modal').classList.add('hidden');
+        }
         
-        // 초기화
-        loadMealsFromLocal(); // 페이지 로드 시 로컬 데이터 먼저 로드
-        initializeFirebase(); // Firebase 초기화 (Config 확인 후 클라우드 연결 시도)
-        updateTotals();
-        renderMealList(); // 로드된 데이터를 화면에 표시
+        // 오류 모달 표시
+        function showErrorModal(title, message) {
+            document.getElementById('error-modal-title').textContent = title;
+            document.getElementById('error-modal-message').textContent = message;
+            document.getElementById('error-modal').classList.remove('hidden');
+        }
+
+        // 식단 추가 핸들러
+        window.addMeal = function() {
+            const meal = {
+                date: mealInput.date.value,
+                name: mealInput.name.value.trim(),
+                kcal: parseInt(mealInput.kcal.value) || 0,
+                carbs: parseInt(mealInput.carbs.value) || 0,
+                protein: parseInt(mealInput.protein.value) || 0,
+                fat: parseInt(mealInput.fat.value) || 0,
+            };
+
+            if (!meal.name || meal.kcal <= 0) {
+                showErrorModal("입력 오류", "식단명과 0 이상의 칼로리(Kcal)는 필수 입력 사항입니다.");
+                return;
+            }
+
+            meals.push(meal);
+            renderMeals();
+            
+            // 입력 필드 초기화
+            mealInput.name.value = '';
+            mealInput.kcal.value = '';
+            mealInput.carbs.value = '';
+            mealInput.protein.value = '';
+            mealInput.fat.value = '';
+            mealInput.name.focus();
+        };
         
+        // 식단 삭제 핸들러
+        window.deleteMeal = function(index) {
+            meals.splice(index, 1);
+            renderMeals();
+        };
+
+        // 식단 수정 모달 열기
+        window.editMeal = function(index) {
+            const meal = meals[index];
+            document.getElementById('edit-meal-name').value = meal.name;
+            document.getElementById('edit-meal-kcal').value = meal.kcal;
+            document.getElementById('edit-meal-carbs').value = meal.carbs;
+            document.getElementById('edit-meal-protein').value = meal.protein;
+            document.getElementById('edit-meal-fat').value = meal.fat;
+            document.getElementById('edit-modal-save').onclick = () => saveEdit(index);
+            document.getElementById('edit-modal').classList.remove('hidden');
+        }
+        
+        // 식단 수정 저장
+        window.saveEdit = function(index) {
+            const name = document.getElementById('edit-meal-name').value.trim();
+            const kcal = parseInt(document.getElementById('edit-meal-kcal').value) || 0;
+            const carbs = parseInt(document.getElementById('edit-meal-carbs').value) || 0;
+            const protein = parseInt(document.getElementById('edit-meal-protein').value) || 0;
+            const fat = parseInt(document.getElementById('edit-meal-fat').value) || 0;
+
+            if (!name || kcal <= 0) {
+                showErrorModal("입력 오류", "식단명과 0 이상의 칼로리(Kcal)는 필수 입력 사항입니다.");
+                return;
+            }
+
+            meals[index] = { ...meals[index], name, kcal, carbs, protein, fat };
+            renderMeals();
+            document.getElementById('edit-modal').classList.add('hidden');
+        }
+
+
+        // 이벤트 리스너
+        window.onload = function() {
+            // 날짜 입력 필드의 기본값을 오늘 날짜로 설정
+            const today = new Date().toISOString().substring(0, 10);
+            mealInput.date.value = today;
+
+            mealInput.addButton.addEventListener('click', window.addMeal);
+            saveButton.addEventListener('click', saveTodaysMeals);
+            
+            // 초기 렌더링 및 Firebase 초기화
+            renderMeals();
+            initializeFirebase();
+        };
+
+        // 전역으로 필요한 함수 노출
+        window.showDetails = showDetails;
+        window.loadMealDetails = loadMealDetails;
+
     </script>
+
 
 </body>
 </html>
