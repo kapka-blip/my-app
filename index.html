@@ -29,6 +29,7 @@
         <h1 class="text-2xl sm:text-3xl font-bold text-center text-gray-800 mb-2">
             일일 식단 자동 계산기
         </h1>
+        <!-- ⚠️ Firebase 설정이 없으면 이 메시지가 유지됩니다. -->
         <p id="user-info" class="text-xs text-center text-gray-500 mb-6">[사용자 인증 중...]</p>
         
         <!-- 1. 총 합계 표시 영역 -->
@@ -96,13 +97,14 @@
         </form>
 
         <!-- 최종 저장 버튼 -->
+        <!-- Firebase 설정 오류 시 이 버튼은 클라우드 저장을 시도하므로 계속 오류가 발생할 수 있습니다. -->
         <button type="button" onclick="saveDailyRecord()" class="mt-4 w-full px-4 py-2 bg-green-600 text-white font-semibold rounded-md shadow-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
-            오늘의 식단 최종 저장
+            오늘의 식단 최종 저장 (클라우드)
         </button>
 
 
         <!-- 3. 추가된 식단 목록 -->
-        <h2 class="text-xl font-bold text-gray-800 mt-8 mb-4 border-b pb-2">오늘의 식단 (미저장)</h2>
+        <h2 class="text-xl font-bold text-gray-800 mt-8 mb-4 border-b pb-2">오늘의 식단 (미저장, 로컬에 임시 보관 중)</h2>
         <div class="overflow-x-auto mb-10">
             <table class="min-w-full divide-y divide-gray-200">
                 <thead class="bg-gray-50">
@@ -146,7 +148,7 @@
                 </thead>
                 <tbody id="daily-records-list" class="bg-white divide-y divide-gray-200">
                     <tr>
-                        <td colspan="6" class="px-6 py-4 text-center text-gray-500 italic">저장된 일일 기록을 불러오는 중...</td>
+                        <td colspan="6" class="px-6 py-4 text-center text-gray-500 italic">저장된 일일 기록을 불러오는 중... (클라우드)</td>
                     </tr>
                 </tbody>
             </table>
@@ -164,8 +166,6 @@
         // --- 0. 전역 설정 및 변수 선언 ---
         
         // 🚨 중요: 여기에 사용자님의 실제 Firebase Config 값을 붙여넣어 주세요! 
-        // Firebase 콘솔에서 복사한 firebaseConfig 객체를 이 부분에 넣어야 합니다.
-        // 예시: const manualFirebaseConfig = { apiKey: "...", authDomain: "...", ... };
         const manualFirebaseConfig = null; // 여기에 사용자 Firebase Config 값 붙여넣기
 
         // Firebase 전역 변수 (GitHub Pages 환경을 위한 수동 설정)
@@ -202,6 +202,9 @@
         // 앱 상태 (미저장 식단)
         let meals = []; 
         let editingMealId = null; 
+        
+        // 로컬 저장소 키
+        const LOCAL_STORAGE_KEY = 'unsavedMeals'; 
 
         // 페이지 로드 시 오늘 날짜 설정 및 예시 행 숨기기
         mealDateInput.valueAsDate = new Date();
@@ -237,6 +240,31 @@
             document.body.appendChild(messageBox);
         }
 
+        /** 미저장 식단 로컬 저장소에 저장 */
+        function saveMealsToLocal() {
+            try {
+                localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(meals));
+            } catch (e) {
+                console.error("로컬 저장소 저장 실패:", e);
+                showCustomAlert("저장 경고", "브라우저 로컬 저장소에 데이터를 저장할 수 없습니다.", "red");
+            }
+        }
+
+        /** 미저장 식단 로컬 저장소에서 로드 */
+        function loadMealsFromLocal() {
+            try {
+                const storedMeals = localStorage.getItem(LOCAL_STORAGE_KEY);
+                if (storedMeals) {
+                    meals = JSON.parse(storedMeals);
+                } else {
+                    meals = [];
+                }
+            } catch (e) {
+                console.error("로컬 저장소 로드 실패:", e);
+                meals = [];
+            }
+        }
+        
         /** 총합계 업데이트 함수 */
         function updateTotals() {
             const totalKcal = meals.reduce((sum, meal) => sum + meal.kcal, 0);
@@ -279,6 +307,7 @@
             } else if (initialExampleRow) {
                 initialExampleRow.style.display = 'none';
             }
+            saveMealsToLocal(); // 렌더링 후 로컬 저장
         }
 
         // --- 2. 데이터 관리 함수 (CRUD for current meals) ---
@@ -357,9 +386,9 @@
         /** Firebase 초기화 및 인증 */
         async function initializeFirebase() {
             if (!firebaseConfig) {
-                document.getElementById('user-info').textContent = "Firebase 설정 오류";
+                document.getElementById('user-info').textContent = "Firebase 설정 오류 (클라우드 저장 비활성화)";
                 console.error("Firebase configuration is missing. Data saving/loading will not work.");
-                isAuthReady = true; // 인증이 필요 없는 상태로 강제 전환 (Firebase 기능만 비활성화)
+                isAuthReady = false; 
                 return;
             }
 
@@ -376,7 +405,6 @@
                 if (currentUser) {
                     userId = currentUser.uid;
                 } else {
-                    // 익명 로그인 실패 시 임시 ID 사용 ( Firestore 보안 규칙에 따라 실패할 수 있음)
                     userId = 'local-anonymous-user-' + crypto.randomUUID(); 
                 }
                 
@@ -390,11 +418,11 @@
                 
             } catch (error) {
                 console.error("Error initializing Firebase or signing in:", error);
-                // 오류 발생 시 경고 및 로컬 ID로 전환
+                // 오류 발생 시 로컬 ID로 전환
                 userId = 'local-anonymous-user-' + crypto.randomUUID();
-                isAuthReady = true;
-                document.getElementById('user-info').textContent = `Firebase 오류. (ID: ${userId}) 로컬 저장만 가능할 수 있습니다.`;
-                showCustomAlert("Firebase 연결 오류", "Firebase 설정 또는 네트워크 문제로 클라우드 데이터 저장이 불가능합니다.", "red");
+                isAuthReady = false;
+                document.getElementById('user-info').textContent = `Firebase 오류. (ID: ${userId}) 클라우드 저장 비활성화.`;
+                showCustomAlert("Firebase 연결 오류", "Firebase 설정 또는 네트워크 문제로 클라우드 데이터 저장이 불가능합니다. 로컬 임시 저장소는 작동합니다.", "red");
             }
         }
         
@@ -405,18 +433,18 @@
             return collection(db, 'artifacts', appId, 'users', userId, 'daily_summaries');
         }
 
-        /** 오늘의 식단 최종 저장 */
+        /** 오늘의 식단 최종 저장 (클라우드) */
         window.saveDailyRecord = async function() {
+            if (!firebaseConfig) {
+                 showCustomAlert("클라우드 저장 실패", "Firebase 설정이 누락되어 클라우드 저장이 불가능합니다. (오류 메시지 참고)", "red");
+                 return;
+            }
             if (!isAuthReady) {
-                showCustomAlert("저장 오류", "사용자 인증이 완료되지 않았습니다.", "red");
+                showCustomAlert("저장 오류", "사용자 인증이 완료되지 않았습니다. 잠시 후 다시 시도해주세요.", "red");
                 return;
             }
             if (meals.length === 0) {
                 showCustomAlert("저장 오류", "저장할 식단이 없습니다. 식단을 먼저 추가해주세요.", "red");
-                return;
-            }
-            if (!firebaseConfig) {
-                showCustomAlert("클라우드 저장 오류", "Firebase 설정이 누락되어 클라우드 저장이 불가능합니다. 코드를 수정해주세요.", "red");
                 return;
             }
 
@@ -447,23 +475,29 @@
                 // 날짜를 document ID로 사용하여 덮어쓰기 방지
                 await setDoc(doc(collectionRef, recordDate), record);
                 
-                showCustomAlert("저장 완료", `${recordDate}의 식단 기록 (${totals.kcal.toFixed(0)} Kcal)이 성공적으로 저장되었습니다.`, "green");
+                showCustomAlert("저장 완료", `${recordDate}의 식단 기록 (${totals.kcal.toFixed(0)} Kcal)이 성공적으로 클라우드에 저장되었습니다.`, "green");
                 
                 // 저장 후 현재 식단 목록 초기화
                 meals = [];
+                localStorage.removeItem(LOCAL_STORAGE_KEY); // 로컬 임시 저장소도 비움
                 updateTotals();
                 renderMealList();
                 
             } catch (e) {
                 console.error("Error saving document: ", e);
-                showCustomAlert("저장 실패", "데이터 저장 중 오류가 발생했습니다. (Firebase 보안 규칙 확인 필요)", "red");
+                showCustomAlert("저장 실패", "데이터 저장 중 오류가 발생했습니다. (Firebase 보안 규칙 또는 네트워크 문제)", "red");
             }
         }
 
         /** 일일 기록 실시간 불러오기 */
         function fetchDailyRecords() {
             const collectionRef = getDailyRecordsCollectionRef();
-            if (!collectionRef) return;
+            if (!collectionRef || !isAuthReady || !firebaseConfig) {
+                document.getElementById('daily-records-list').innerHTML = `
+                    <tr><td colspan="6" class="px-6 py-4 text-center text-gray-500 italic">클라우드 데이터 연결 오류로 기록을 불러올 수 없습니다.</td></tr>
+                `;
+                return;
+            }
 
             // 날짜(date) 기준으로 내림차순 정렬
             const q = query(collectionRef, orderBy("date", "desc"));
@@ -567,10 +601,11 @@
         mealForm.addEventListener('submit', function(event) {
             event.preventDefault();
 
-            if (!isAuthReady) {
-                showCustomAlert("오류", "사용자 인증이 완료되지 않아 데이터를 저장할 수 없습니다.", "red");
-                return;
-            }
+            // Firebase 인증 상태는 더 이상 추가 버튼의 필수 조건이 아님 (로컬 저장소 때문)
+            // if (!isAuthReady) {
+            //     showCustomAlert("오류", "사용자 인증이 완료되지 않아 데이터를 저장할 수 없습니다.", "red");
+            //     return;
+            // }
 
             const newMealData = {
                 date: mealDateInput.value,
@@ -605,7 +640,7 @@
             }
 
             updateTotals();
-            renderMealList();
+            renderMealList(); // 이 함수 내에서 로컬 저장 실행
 
             mealNameInput.value = '';
             kcalInput.value = '';
@@ -617,9 +652,10 @@
         });
         
         // 초기화
-        initializeFirebase();
+        loadMealsFromLocal(); // 페이지 로드 시 로컬 데이터 먼저 로드
+        initializeFirebase(); // Firebase 초기화 (Config 확인 후 클라우드 연결 시도)
         updateTotals();
-        renderMealList();
+        renderMealList(); // 로드된 데이터를 화면에 표시
         
     </script>
 
