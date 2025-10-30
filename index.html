@@ -163,10 +163,17 @@
         
         // --- 0. 전역 설정 및 변수 선언 ---
         
-        // Firebase 전역 변수 (캔버스 환경에서 제공됨)
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        // 🚨 중요: 여기에 사용자님의 실제 Firebase Config 값을 붙여넣어 주세요! 
+        // Firebase 콘솔에서 복사한 firebaseConfig 객체를 이 부분에 넣어야 합니다.
+        // 예시: const manualFirebaseConfig = { apiKey: "...", authDomain: "...", ... };
+        const manualFirebaseConfig = null; // 여기에 사용자 Firebase Config 값 붙여넣기
+
+        // Firebase 전역 변수 (GitHub Pages 환경을 위한 수동 설정)
+        const appId = manualFirebaseConfig ? manualFirebaseConfig.projectId : 'default-app-id';
+        const firebaseConfig = manualFirebaseConfig;
+        
+        // 캔버스 환경이 아니므로 초기 토큰은 사용하지 않습니다.
+        const initialAuthToken = null; 
 
         // Firebase State
         let app;
@@ -176,7 +183,7 @@
         let isAuthReady = false;
         let dailyRecords = []; // 저장된 일일 기록 데이터
 
-        // HTML 요소 선택
+        // HTML 요소 선택 (이하 생략 - 이전 코드와 동일)
         const mealForm = document.getElementById('meal-form');
         const mealDateInput = document.getElementById('meal-date');
         const mealNameInput = document.getElementById('meal-name');
@@ -350,53 +357,50 @@
         /** Firebase 초기화 및 인증 */
         async function initializeFirebase() {
             if (!firebaseConfig) {
-                console.error("Firebase configuration is missing.");
                 document.getElementById('user-info').textContent = "Firebase 설정 오류";
+                console.error("Firebase configuration is missing. Data saving/loading will not work.");
+                isAuthReady = true; // 인증이 필요 없는 상태로 강제 전환 (Firebase 기능만 비활성화)
                 return;
             }
 
             try {
-                setLogLevel('debug'); // Firestore 로그 레벨 설정
+                // setLogLevel('debug'); // 디버그 로그 필요 시 활성화
                 app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
                 auth = getAuth(app);
                 
-                // 인증 처리
-                onAuthStateChanged(auth, async (user) => {
-                    if (!user) {
-                        if (initialAuthToken) {
-                            await signInWithCustomToken(auth, initialAuthToken);
-                        } else {
-                            await signInAnonymously(auth);
-                        }
-                    }
-                    
-                    const currentUser = auth.currentUser;
-                    if (currentUser) {
-                        userId = currentUser.uid;
-                    } else {
-                        // 익명 로그인 실패 시 임시 ID 사용 ( Firestore 보안 규칙에 따라 실패할 수 있음)
-                        userId = 'anonymous-user-' + Date.now(); 
-                    }
-                    
-                    isAuthReady = true;
-                    console.log("Firebase Auth Ready. User ID:", userId);
-                    document.getElementById('user-info').textContent = `사용자 ID: ${userId}`;
-                    
-                    if (userId) {
-                        fetchDailyRecords();
-                    }
-                });
+                // 익명 인증 시도
+                const userCredential = await signInAnonymously(auth);
+                const currentUser = userCredential.user;
+                
+                if (currentUser) {
+                    userId = currentUser.uid;
+                } else {
+                    // 익명 로그인 실패 시 임시 ID 사용 ( Firestore 보안 규칙에 따라 실패할 수 있음)
+                    userId = 'local-anonymous-user-' + crypto.randomUUID(); 
+                }
+                
+                isAuthReady = true;
+                console.log("Firebase Auth Ready. User ID:", userId);
+                document.getElementById('user-info').textContent = `사용자 ID: ${userId} (클라우드 연결됨)`;
+                
+                if (userId) {
+                    fetchDailyRecords();
+                }
                 
             } catch (error) {
                 console.error("Error initializing Firebase or signing in:", error);
-                document.getElementById('user-info').textContent = `오류: Firebase 연결 실패`;
+                // 오류 발생 시 경고 및 로컬 ID로 전환
+                userId = 'local-anonymous-user-' + crypto.randomUUID();
+                isAuthReady = true;
+                document.getElementById('user-info').textContent = `Firebase 오류. (ID: ${userId}) 로컬 저장만 가능할 수 있습니다.`;
+                showCustomAlert("Firebase 연결 오류", "Firebase 설정 또는 네트워크 문제로 클라우드 데이터 저장이 불가능합니다.", "red");
             }
         }
         
         /** 일일 기록 컬렉션 참조 반환 */
         function getDailyRecordsCollectionRef() {
-            if (!db || !userId) return null;
+            if (!db || !userId || !firebaseConfig) return null;
             // Private collection path: /artifacts/{appId}/users/{userId}/daily_summaries
             return collection(db, 'artifacts', appId, 'users', userId, 'daily_summaries');
         }
@@ -409,6 +413,10 @@
             }
             if (meals.length === 0) {
                 showCustomAlert("저장 오류", "저장할 식단이 없습니다. 식단을 먼저 추가해주세요.", "red");
+                return;
+            }
+            if (!firebaseConfig) {
+                showCustomAlert("클라우드 저장 오류", "Firebase 설정이 누락되어 클라우드 저장이 불가능합니다. 코드를 수정해주세요.", "red");
                 return;
             }
 
@@ -448,7 +456,7 @@
                 
             } catch (e) {
                 console.error("Error saving document: ", e);
-                showCustomAlert("저장 실패", "데이터 저장 중 오류가 발생했습니다.", "red");
+                showCustomAlert("저장 실패", "데이터 저장 중 오류가 발생했습니다. (Firebase 보안 규칙 확인 필요)", "red");
             }
         }
 
@@ -560,7 +568,7 @@
             event.preventDefault();
 
             if (!isAuthReady) {
-                showCustomAlert("오류", "사용자 인증 중입니다. 잠시 후 다시 시도해주세요.", "red");
+                showCustomAlert("오류", "사용자 인증이 완료되지 않아 데이터를 저장할 수 없습니다.", "red");
                 return;
             }
 
