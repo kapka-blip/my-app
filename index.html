@@ -4,14 +4,51 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>일일 식단 자동 계산기</title>
-    <!-- Tailwind CSS 로드 -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setPersistence, browserSessionPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        
+        // ⭐️ 'where', 'documentId' 임포트 추가 (기간별 조회를 위해)
+        import { getFirestore, doc, getDoc, setDoc, collection, query, getDocs, setLogLevel, where, documentId } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Firebase 설정 및 초기화
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let app, db, auth, userId = null;
+
+        // 전역 함수로 노출
+        window.initializeApp = initializeApp;
+        window.getAuth = getAuth;
+        window.signInAnonymously = signInAnonymously;
+        window.signInWithCustomToken = signInWithCustomToken;
+        window.onAuthStateChanged = onAuthStateChanged;
+        window.getFirestore = getFirestore;
+        window.doc = doc;
+        window.getDoc = getDoc;
+        window.setDoc = setDoc;
+        window.collection = collection;
+        window.query = query;
+        window.getDocs = getDocs;
+        window.setLogLevel = setLogLevel;
+        window.setPersistence = setPersistence;
+        window.browserSessionPersistence = browserSessionPersistence;
+        
+        // ⭐️ 'where', 'documentId' 전역 노출
+        window.where = where;
+        window.documentId = documentId;
+        
+        window.getFirebaseInstances = () => ({ app, db, auth, userId, appId, initialAuthToken });
+        window.setUserId = (id) => { userId = id; };
+
+    </script>
     <style>
-        /* 기본 폰트 설정 */
+        /* (스타일은 기존과 동일) */
         body {
             font-family: 'Inter', 'Noto Sans KR', sans-serif;
         }
-        /* 숫자 입력 필드에서 화살표 버튼 숨기기 */
         input[type=number]::-webkit-inner-spin-button,
         input[type=number]::-webkit-outer-spin-button {
             -webkit-appearance: none;
@@ -20,13 +57,15 @@
         input[type=number] {
             -moz-appearance: textfield;
         }
-        /* 스크롤바 숨기기 (선택 사항) */
-        .no-scrollbar::-webkit-scrollbar {
-            display: none;
+        #report-content::-webkit-scrollbar {
+            width: 8px;
         }
-        .no-scrollbar {
-            -ms-overflow-style: none;  /* IE and Edge */
-            scrollbar-width: none;  /* Firefox */
+        #report-content::-webkit-scrollbar-thumb {
+            background: #9ca3af;
+            border-radius: 4px;
+        }
+        #report-content::-webkit-scrollbar-track {
+            background: #f3f4f6;
         }
     </style>
 </head>
@@ -34,697 +73,577 @@
 
     <div class="bg-white rounded-2xl shadow-xl p-6 sm:p-8 w-full max-w-4xl">
         
-        <h1 class="text-2xl sm:text-3xl font-bold text-center text-gray-800 mb-2">
+        <h1 class="text-2xl sm:text-3xl font-bold text-center text-gray-800 mb-4">
             일일 식단 자동 계산기
         </h1>
-        <p id="firebase-status" class="text-center text-sm text-red-500 mb-4 font-medium">
-            ⚠️ Firebase 설정이 없으면 이 메시지가 유지됩니다. 잠시 기다려 주세요...
-        </p>
 
-        <!-- 식단 입력 폼 -->
-        <div id="meal-input-form" class="bg-indigo-50 p-4 sm:p-6 rounded-xl shadow-inner mb-6">
-            <h2 class="text-xl font-semibold text-indigo-700 mb-4">식단 정보 입력</h2>
-            <div class="grid grid-cols-2 md:grid-cols-6 gap-4">
-                
-                <div class="col-span-2 md:col-span-1">
-                    <label for="date" class="block text-xs font-medium text-gray-700 mb-1">날짜</label>
-                    <input type="date" id="date" class="w-full p-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition duration-150">
-                </div>
-
-                <div class="col-span-2 md:col-span-1">
-                    <label for="meal-name" class="block text-xs font-medium text-gray-700 mb-1">식단명/메뉴</label>
-                    <input type="text" id="meal-name" placeholder="아침 식사, 닭가슴살 등" class="w-full p-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition duration-150">
-                </div>
-                
-                <div class="col-span-1">
-                    <label for="kcal" class="block text-xs font-medium text-gray-700 mb-1">칼로리 (Kcal)</label>
-                    <input type="number" id="kcal" placeholder="0" min="0" class="w-full p-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition duration-150">
-                </div>
-
-                <div class="col-span-1">
-                    <label for="carbs" class="block text-xs font-medium text-gray-700 mb-1">탄수화물 (g)</label>
-                    <input type="number" id="carbs" placeholder="0" min="0" class="w-full p-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition duration-150">
-                </div>
-
-                <div class="col-span-1">
-                    <label for="protein" class="block text-xs font-medium text-gray-700 mb-1">단백질 (g)</label>
-                    <input type="number" id="protein" placeholder="0" min="0" class="w-full p-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition duration-150">
-                </div>
-
-                <div class="col-span-1">
-                    <label for="fat" class="block text-xs font-medium text-gray-700 mb-1">지방 (g)</label>
-                    <input type="number" id="fat" placeholder="0" min="0" class="w-full p-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition duration-150">
-                </div>
-
-            </div>
-            <button id="add-meal-button" class="w-full mt-4 py-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-md transition duration-200 transform hover:scale-[1.01] focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
-                식단 추가
+        <div class="flex border-b border-gray-200 mb-6">
+            <button id="tab-daily-input" onclick="switchView('daily-input')"
+                    class="px-4 py-2 text-sm sm:text-base font-medium rounded-t-lg transition-colors duration-150 border-b-2 border-indigo-500 text-indigo-600">
+                일일 입력
+            </button>
+            <button id="tab-report" onclick="switchView('report')"
+                    class="px-4 py-2 text-sm sm:text-base font-medium rounded-t-lg transition-colors duration-150 border-b-2 border-transparent text-gray-500 hover:text-indigo-600 hover:border-indigo-500">
+                저장 기록 조회
             </button>
         </div>
 
-        <!-- 일일 합계 및 저장 버튼 -->
-        <div class="bg-yellow-50 p-4 sm:p-6 rounded-xl shadow-inner mb-6 flex flex-col md:flex-row justify-between items-center">
-            <div id="daily-summary" class="grid grid-cols-2 sm:grid-cols-5 gap-4 w-full md:w-auto mb-4 md:mb-0 text-center md:text-left">
-                <span class="font-bold text-gray-700 text-sm">총 칼로리: <span id="total-kcal" class="text-lg font-extrabold text-red-600 block">0</span> Kcal</span>
-                <span class="font-bold text-gray-700 text-sm">탄수화물: <span id="total-carbs" class="text-lg font-extrabold text-blue-600 block">0</span> g</span>
-                <span class="font-bold text-gray-700 text-sm">단백질: <span id="total-protein" class="text-lg font-extrabold text-green-600 block">0</span> g</span>
-                <span class="font-bold text-gray-700 text-sm">지방: <span id="total-fat" class="text-lg font-extrabold text-yellow-600 block">0</span> g</span>
-                <span class="font-bold text-gray-700 text-sm">내 ID: <span id="user-display-id" class="text-xs font-mono text-gray-500 block break-all"></span></span>
-            </div>
-            
-            <button id="save-button" class="w-full md:w-auto py-2 px-6 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-lg shadow-lg transition duration-200 transform hover:scale-[1.05] focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2">
-                오늘의 식단 저장
-            </button>
-        </div>
-
-        <!-- 식단 목록 -->
-        <div class="mb-6">
-            <h2 class="text-xl font-semibold text-gray-700 mb-3">등록된 식단 목록 (<span id="current-date-display">오늘</span>)</h2>
-            <div id="meals-list" class="space-y-3 no-scrollbar max-h-96 overflow-y-auto pr-2">
-                <!-- 식단 항목이 여기에 렌더링됩니다. -->
-                <p id="no-meals-message" class="text-gray-500 italic text-center py-4">등록된 식단이 없습니다. 위에 입력 후 '식단 추가' 버튼을 눌러주세요.</p>
-            </div>
+        <div id="auth-status-message" class="text-center p-3 mb-4 rounded-lg text-sm transition-opacity duration-300 bg-red-100 text-red-600">
+            데이터베이스 연결 중...
         </div>
         
-        <!-- 날짜 이동 및 조회 -->
-        <div class="flex justify-center items-center space-x-4">
-            <button id="prev-day-button" class="p-2 bg-gray-200 rounded-full hover:bg-gray-300 transition duration-150">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
-                </svg>
-            </button>
-            <span id="current-view-date" class="text-lg font-bold text-gray-800"></span>
-            <button id="next-day-button" class="p-2 bg-gray-200 rounded-full hover:bg-gray-300 transition duration-150">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-                </svg>
-            </button>
-        </div>
-
-    </div>
-
-    <!-- 수정 모달 (Edit Modal) -->
-    <div id="edit-modal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-75 flex items-center justify-center p-4 z-50 transition-opacity duration-300">
-        <div class="bg-white rounded-xl shadow-2xl w-full max-w-md p-6">
-            <h3 class="text-2xl font-bold text-gray-800 mb-4">식단 항목 수정</h3>
-            <div class="space-y-3">
-                <div>
-                    <label for="edit-meal-name" class="block text-sm font-medium text-gray-700">식단명</label>
-                    <input type="text" id="edit-meal-name" class="w-full p-2 border border-gray-300 rounded-lg" required>
+        <div id="view-container">
+            
+            <div id="daily-input-view" class="space-y-6">
+                <div class="flex flex-col sm:flex-row justify-between items-center bg-gray-50 p-4 rounded-xl shadow-inner">
+                    <div class="mb-2 sm:mb-0">
+                        <label for="meal-date" class="block text-sm font-medium text-gray-700 mb-1">날짜 선택:</label>
+                        <input type="date" id="meal-date" class="p-2 border border-gray-300 rounded-lg w-full sm:w-auto shadow-sm focus:ring-indigo-500 focus:border-indigo-500">
+                    </div>
+                    <div class="text-xs text-gray-500 text-right w-full sm:w-auto">
+                        <span class="font-semibold">사용자 ID (공유 가능):</span>
+                        <p id="user-id-display" class="break-all mt-1"></p>
+                    </div>
                 </div>
-                <div>
-                    <label for="edit-meal-kcal" class="block text-sm font-medium text-gray-700">칼로리 (Kcal)</label>
-                    <input type="number" id="edit-meal-kcal" min="0" class="w-full p-2 border border-gray-300 rounded-lg">
+
+                <div class="bg-indigo-50 p-4 rounded-xl shadow-lg">
+                    <h2 class="text-xl font-semibold text-indigo-800 mb-4">식단 입력</h2>
+                    <div class="grid grid-cols-2 sm:grid-cols-6 gap-3">
+                        <input type="text" id="meal-name" placeholder="식단명 (예: 아침 식사)" class="col-span-2 p-3 border border-indigo-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500 transition-shadow shadow-md" required>
+                        <input type="number" id="meal-kcal" placeholder="Kcal" class="p-3 border border-indigo-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500 transition-shadow shadow-md" required>
+                        <input type="number" id="meal-carbs" placeholder="탄수화물(g)" class="p-3 border border-indigo-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500 transition-shadow shadow-md">
+                        <input type="number" id="meal-protein" placeholder="단백질(g)" class="p-3 border border-indigo-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500 transition-shadow shadow-md">
+                        <input type="number" id="meal-fat" placeholder="지방(g)" class="p-3 border border-indigo-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500 transition-shadow shadow-md">
+                    </div>
+                    <button id="add-meal-button"
+                            class="mt-4 w-full bg-indigo-600 text-white py-3 rounded-xl hover:bg-indigo-700 transition-colors duration-200 font-bold shadow-lg transform hover:scale-[1.01]">
+                        + 식단 추가
+                    </button>
                 </div>
-                <div class="grid grid-cols-3 gap-3">
-                    <div>
-                        <label for="edit-meal-carbs" class="block text-sm font-medium text-gray-700">탄수화물 (g)</label>
-                        <input type="number" id="edit-meal-carbs" min="0" class="w-full p-2 border border-gray-300 rounded-lg">
+
+                <div class="space-y-4">
+                    <h2 class="text-xl font-semibold text-gray-800 border-b pb-2">오늘의 식단 목록</h2>
+                    <div id="meals-list" class="space-y-3">
+                        <p class="text-gray-500 text-center p-4" id="no-meals-message">추가된 식단이 없습니다.</p>
                     </div>
-                    <div>
-                        <label for="edit-meal-protein" class="block text-sm font-medium text-gray-700">단백질 (g)</label>
-                        <input type="number" id="edit-meal-protein" min="0" class="w-full p-2 border border-gray-300 rounded-lg">
+
+                    <div id="totals" class="bg-green-50 p-4 rounded-xl shadow-md border-l-4 border-green-500 font-semibold text-green-800">
+                        <h3 class="text-lg mb-2">총 합계</h3>
+                        <div class="grid grid-cols-4 gap-2 text-sm">
+                            <p>Kcal: <span id="total-kcal">0</span></p>
+                            <p>탄수화물(g): <span id="total-carbs">0</span></p>
+                            <p>단백질(g): <span id="total-protein">0</span></p>
+                            <p>지방(g): <span id="total-fat">0</span></p>
+                        </div>
                     </div>
-                    <div>
-                        <label for="edit-meal-fat" class="block text-sm font-medium text-gray-700">지방 (g)</label>
-                        <input type="number" id="edit-meal-fat" min="0" class="w-full p-2 border border-gray-300 rounded-lg">
-                    </div>
+
+                    <button id="save-button"
+                            class="w-full bg-green-600 text-white py-3 rounded-xl hover:bg-green-700 transition-colors duration-200 font-bold shadow-lg transform hover:scale-[1.01]">
+                        오늘의 식단 저장
+                    </button>
                 </div>
             </div>
-            <div class="flex justify-end space-x-3 mt-6">
-                <button onclick="window.hideEditModal()" class="px-4 py-2 bg-gray-300 hover:bg-gray-400 text-gray-800 font-semibold rounded-lg transition duration-150">
-                    취소
-                </button>
-                <!-- data-meal-index 속성을 사용하여 인덱스 저장 -->
-                <button id="save-edit-button" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg transition duration-150">
-                    저장
-                </button>
+
+            <div id="report-view" class="hidden space-y-6">
+                <h2 class="text-2xl font-bold text-gray-800">식단 저장 기록</h2>
+                
+                <div class="flex flex-col sm:flex-row gap-4 items-center bg-gray-50 p-4 rounded-xl shadow-inner">
+                    <div class="flex-1 w-full">
+                        <label for="report-start-date" class="block text-sm font-medium text-gray-700 mb-1">시작일:</label>
+                        <input type="date" id="report-start-date" class="p-2 border border-gray-300 rounded-lg w-full shadow-sm focus:ring-indigo-500 focus:border-indigo-500">
+                    </div>
+                    <div class="flex-1 w-full">
+                        <label for="report-end-date" class="block text-sm font-medium text-gray-700 mb-1">종료일:</label>
+                        <input type="date" id="report-end-date" class="p-2 border border-gray-300 rounded-lg w-full shadow-sm focus:ring-indigo-500 focus:border-indigo-500">
+                    </div>
+                    <button id="report-search-button" onclick="renderReport()"
+                            class="w-full sm:w-auto bg-blue-500 text-white py-2 px-6 rounded-xl hover:bg-blue-600 transition-colors duration-200 font-medium shadow-md self-end sm:mt-6">
+                        조회
+                    </button>
+                </div>
+                <div id="report-content" class="bg-white rounded-xl shadow-inner p-4 max-h-[60vh] overflow-y-auto">
+                    <p class="text-gray-500 text-center p-10" id="report-loading-message">
+                        저장된 기록을 불러오는 중...
+                    </p>
+                </div>
             </div>
+            
         </div>
+        
     </div>
-    
-    <!-- 오류 모달 (Error Modal) -->
-    <div id="error-modal" class="hidden fixed inset-0 bg-red-600 bg-opacity-75 flex items-center justify-center p-4 z-50 transition-opacity duration-300">
-        <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6 text-center">
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 text-red-500 mx-auto mb-4" viewBox="0 0 20 20" fill="currentColor">
-                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
-            </svg>
-            <h3 id="error-title" class="text-xl font-bold text-red-700 mb-2">오류 발생</h3>
-            <p id="error-message" class="text-gray-600 mb-6">오류 메시지</p>
-            <button onclick="window.hideErrorModal()" class="px-6 py-2 bg-red-500 hover:bg-red-600 text-white font-semibold rounded-lg transition duration-150">
+
+    <div id="modal-container" class="hidden fixed inset-0 bg-gray-900 bg-opacity-50 z-50 flex items-center justify-center p-4" onclick="document.getElementById('modal-container').classList.add('hidden');">
+        <div id="modal-content" class="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm transform transition-all duration-300 scale-100" onclick="event.stopPropagation();">
+            <h3 id="modal-title" class="text-xl font-bold mb-3 text-red-600">제목</h3>
+            <p id="modal-message" class="text-gray-700 mb-4">메시지 내용</p>
+            <button onclick="document.getElementById('modal-container').classList.add('hidden');"
+                    class="w-full bg-indigo-600 text-white py-2 rounded-xl hover:bg-indigo-700 transition-colors duration-200 font-medium">
                 확인
             </button>
         </div>
     </div>
 
 
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, getDoc, setDoc, onSnapshot, collection, query, where, Timestamp, deleteDoc, updateDoc, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
-        // Firebase 설정 변수 (Canvas 환경에서 제공됨)
-        
-        // --- [GitHub/로컬 실행 시 사용자 설정 영역] ---
-        // 깃허브 페이지 등 Canvas 외부에서 실행하여 데이터 영속성을 유지하려면, 
-        // 아래의 USER_PROVIDED_FIREBASE_CONFIG를 본인의 Firebase 콘솔에서 가져온 값으로 교체해야 합니다.
-        // 현재는 'projectId' 오류 방지를 위한 더미 설정입니다.
-        const USER_PROVIDED_FIREBASE_CONFIG = {
-            apiKey: "DUMMY_API_KEY", 
-            authDomain: "DUMMY_PROJECT.firebaseapp.com",
-            projectId: "DUMMY-PROJECT-ID", // <-- 필수 값: 이 오류가 발생하지 않도록 더미 값 설정
-            storageBucket: "DUMMY_PROJECT.appspot.com",
-            messagingSenderId: "DUMMY_SENDER_ID",
-            appId: "DUMMY_APP_ID"
-        };
-        const USER_PROVIDED_APP_ID = "local-diet-tracker";
-        // --- ---------------------------------- ---
-        
-        const appId = typeof __app_id !== 'undefined' ? __app_id : USER_PROVIDED_APP_ID;
-        // Canvas 환경 변수가 없으면 사용자 정의(더미) 설정을 사용합니다.
-        const firebaseConfig = typeof __firebase_config !== 'undefined' 
-                               ? JSON.parse(__firebase_config) 
-                               : USER_PROVIDED_FIREBASE_CONFIG;
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-
-        let db, auth;
-        let userId = 'loading';
-        let currentViewDate = new Date();
+    <script>
+        // 전역 변수 설정
         let meals = [];
-        let isAuthReady = false;
-
-        // DOM 요소 캐싱
         const mealInput = {
-            date: document.getElementById('date'),
+            date: document.getElementById('meal-date'),
             name: document.getElementById('meal-name'),
-            kcal: document.getElementById('kcal'),
-            carbs: document.getElementById('carbs'),
-            protein: document.getElementById('protein'),
-            fat: document.getElementById('fat'),
-            addButton: document.getElementById('add-meal-button')
+            kcal: document.getElementById('meal-kcal'),
+            carbs: document.getElementById('meal-carbs'),
+            protein: document.getElementById('meal-protein'),
+            fat: document.getElementById('meal-fat'),
+            addButton: document.getElementById('add-meal-button'),
         };
+        const saveButton = document.getElementById('save-button');
         const mealsList = document.getElementById('meals-list');
         const noMealsMessage = document.getElementById('no-meals-message');
-        const saveButton = document.getElementById('save-button');
-        const firebaseStatus = document.getElementById('firebase-status');
-        const userDisplayId = document.getElementById('user-display-id');
-        const currentViewDateDisplay = document.getElementById('current-view-date');
-        const prevDayButton = document.getElementById('prev-day-button');
-        const nextDayButton = document.getElementById('next-day-button');
-        const currentDateDisplay = document.getElementById('current-date-display');
-        const saveEditButton = document.getElementById('save-edit-button');
-        
-        // 유틸리티 함수
-        const formatDate = (date) => date.toISOString().substring(0, 10);
-        const parseDateString = (dateString) => {
-            const [year, month, day] = dateString.split('-').map(Number);
-            // 월은 0부터 시작하므로 -1
-            return new Date(year, month - 1, day);
+        const totalsDisplay = {
+            kcal: document.getElementById('total-kcal'),
+            carbs: document.getElementById('total-carbs'),
+            protein: document.getElementById('total-protein'),
+            fat: document.getElementById('total-fat'),
         };
 
-        // ========== 모달 및 오류 처리 함수 (Cannot read properties of null 방지 로직 강화) ==========
-        
-        /**
-         * 오류 메시지 모달을 표시합니다.
-         * @param {string} title - 모달 제목
-         * @param {string} message - 모달 내용
-         */
-        window.showErrorModal = function(title, message) {
-            const modal = document.getElementById('error-modal');
-            const titleEl = document.getElementById('error-title');
-            const messageEl = document.getElementById('error-message');
+        // Firebase 인스턴스 (초기화 후 설정됨)
+        let db, auth, userId, appId, initialAuthToken;
 
-            if (modal) { // null 체크
-                if (titleEl) titleEl.textContent = title;
-                if (messageEl) messageEl.textContent = message;
-                modal.classList.remove('hidden');
+        // 에러 또는 성공 모달 표시 함수 (alert() 대체)
+        function showModal(title, message, isError = false) {
+            const container = document.getElementById('modal-container');
+            const content = document.getElementById('modal-content');
+            const modalTitle = document.getElementById('modal-title');
+            const modalMessage = document.getElementById('modal-message');
+
+            modalTitle.textContent = title;
+            modalMessage.textContent = message;
+            
+            // 오류/성공 색상 변경
+            if (isError) {
+                modalTitle.classList.remove('text-green-600');
+                modalTitle.classList.add('text-red-600');
             } else {
-                console.error(`[Fatal Error Modal]: Title: ${title}, Message: ${message}`);
+                modalTitle.classList.remove('text-red-600');
+                modalTitle.classList.add('text-green-600');
             }
-        };
 
-        /**
-         * 오류 모달을 숨깁니다.
-         */
-        window.hideErrorModal = function() {
-            const modal = document.getElementById('error-modal');
-            if (modal) { // null 체크
-                modal.classList.add('hidden');
-            }
-        };
+            container.classList.remove('hidden');
+            // 애니메이션 효과를 위해 잠시 후 scale을 조정
+            content.classList.remove('scale-90', 'opacity-0');
+            content.classList.add('scale-100', 'opacity-100');
+        }
 
-        /**
-         * 수정 모달을 숨깁니다.
-         */
-        window.hideEditModal = function() {
-            const modal = document.getElementById('edit-modal');
-            if (modal) { // null 체크
-                modal.classList.add('hidden');
-            }
-        };
-
-        // ========== Firebase 초기화 및 인증 ==========
-
-        /**
-         * Firebase를 초기화하고 사용자 인증을 처리합니다.
-         */
+        // Firebase 초기화 및 인증
         async function initializeFirebase() {
             try {
-                // setLogLevel('debug'); // 디버깅용: 콘솔에 파이어스토어 로그 표시
-                
-                // USER_PROVIDED_FIREBASE_CONFIG를 사용 중인지 확인하고 경고 메시지 업데이트
-                if (firebaseConfig === USER_PROVIDED_FIREBASE_CONFIG) {
-                    firebaseStatus.textContent = "❌ 로컬/깃허브 실행 중. Firebase 데이터 저장은 작동하지 않을 수 있습니다. USER_PROVIDED_FIREBASE_CONFIG를 수정해주세요.";
-                    firebaseStatus.classList.remove('hidden');
-                } else {
-                    firebaseStatus.classList.add('hidden');
-                }
+                const instances = window.getFirebaseInstances();
+                appId = instances.appId;
+                initialAuthToken = instances.initialAuthToken;
 
-
-                const app = initializeApp(firebaseConfig);
-                db = getFirestore(app);
-                auth = getAuth(app);
+                const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
                 
+                // 앱 초기화
+                const app = window.initializeApp(firebaseConfig);
+                db = window.getFirestore(app);
+                auth = window.getAuth(app);
+                window.setLogLevel('debug'); // Firestore 로그 레벨 설정
+
+                // 세션 동안 인증 유지
+                await window.setPersistence(auth, window.browserSessionPersistence);
+
+                // 인증 처리
                 if (initialAuthToken) {
-                    await signInWithCustomToken(auth, initialAuthToken);
+                    await window.signInWithCustomToken(auth, initialAuthToken);
                 } else {
-                    await signInAnonymously(auth);
+                    await window.signInAnonymously(auth);
                 }
 
-                // 인증 상태 변경 리스너
-                onAuthStateChanged(auth, (user) => {
+                // 인증 상태 변경 감지
+                window.onAuthStateChanged(auth, (user) => {
                     if (user) {
                         userId = user.uid;
-                        isAuthReady = true;
-                        userDisplayId.textContent = userId;
-                        if (firebaseConfig !== USER_PROVIDED_FIREBASE_CONFIG) {
-                             firebaseStatus.classList.add('hidden');
-                        }
+                        window.setUserId(userId);
+                        document.getElementById('user-id-display').textContent = userId;
                         
-                        // 인증 완료 후 데이터 리스너 시작
-                        setupDataListener();
-                        
+                        document.getElementById('auth-status-message').classList.remove('bg-red-100', 'text-red-600');
+                        document.getElementById('auth-status-message').classList.add('bg-green-100', 'text-green-600');
+                        document.getElementById('auth-status-message').textContent = `✅ 데이터베이스 연결 완료 (User ID: ${userId.substring(0, 8)}...)`;
+
+                        // 인증 완료 후 오늘 날짜의 식단 로드
+                        loadMealsForDate(mealInput.date.value);
                     } else {
-                        userId = 'anonymous';
-                        isAuthReady = true;
-                        userDisplayId.textContent = userId;
-                        if (firebaseConfig === USER_PROVIDED_FIREBASE_CONFIG) {
-                            firebaseStatus.textContent = "❌ Firebase 설정 누락. 로컬 데이터만 표시됩니다.";
-                        } else {
-                            firebaseStatus.textContent = "⚠️ 익명 사용자로 접속되었습니다. 데이터는 안전하게 저장됩니다.";
-                        }
-                        firebaseStatus.classList.remove('hidden');
+                        // 사용자 ID가 없을 경우 임시 ID 사용 (익명 로그인 실패 시)
+                        userId = 'anonymous-user-' + Math.random().toString(36).substring(2, 11);
+                        window.setUserId(userId);
+                        document.getElementById('user-id-display').textContent = userId;
                         
-                        // 인증 완료 후 데이터 리스너 시작 (익명 사용자는 임시 ID를 사용)
-                        setupDataListener();
+                        document.getElementById('auth-status-message').classList.remove('bg-green-100', 'text-green-600');
+                        document.getElementById('auth-status-message').classList.add('bg-yellow-100', 'text-yellow-600');
+                        document.getElementById('auth-status-message').textContent = `⚠️ 익명 로그인됨 (임시 ID: ${userId.substring(0, 8)}...)`;
+                        loadMealsForDate(mealInput.date.value);
                     }
                 });
 
-            } catch (e) {
-                console.error("Firebase 초기화 또는 인증 오류:", e);
-                window.showErrorModal("Firebase 오류", "앱 초기화 중 문제가 발생했습니다: " + e.message);
-                
-                // 오류 발생 시에도 앱이 완전히 멈추지 않도록 최소한의 UI를 표시
-                userId = 'error-user';
-                isAuthReady = false;
-                userDisplayId.textContent = userId;
-                firebaseStatus.textContent = `🚨 치명적인 초기화 오류: ${e.message}`;
-                firebaseStatus.classList.remove('hidden');
+            } catch (error) {
+                console.error("Firebase 초기화 또는 인증 오류:", error);
+                document.getElementById('auth-status-message').textContent = `❌ 데이터베이스 연결 실패: ${error.message}`;
+                document.getElementById('auth-status-message').classList.remove('bg-green-100', 'text-green-600');
+                document.getElementById('auth-status-message').classList.add('bg-red-100', 'text-red-600');
+                db = null; // DB 연결 실패 표시
             }
         }
-
-        // ========== Firestore 데이터 처리 ==========
         
-        /**
-         * 데이터베이스 경로를 생성합니다.
-         * @param {string} dateStr - YYYY-MM-DD 형식의 날짜 문자열
-         * @returns {string} 문서 경로
-         */
-        function getDailyMealDocPath(dateStr) {
-            const safeUserId = userId || 'unknown'; // 인증 실패 시 대비
-            return `/artifacts/${appId}/users/${safeUserId}/daily_meals/${dateStr}`;
+        // Firestore 컬렉션 경로 생성
+        function getCollectionPath() {
+            if (!userId) {
+                console.error("User ID is not defined.");
+                return null;
+            }
+            // Private Data Path: /artifacts/{appId}/users/{userId}/daily_meals
+            return `/artifacts/${appId}/users/${userId}/daily_meals`;
         }
 
-        /**
-         * Firestore 데이터 변경 리스너를 설정합니다.
-         */
-        function setupDataListener() {
-            if (!db || !isAuthReady || firebaseConfig === USER_PROVIDED_FIREBASE_CONFIG) {
-                // Firebase가 없거나 설정이 더미일 경우, 데이터 로딩을 건너뜁니다.
-                console.warn("DB 또는 인증 준비가 완료되지 않았거나 더미 설정이 사용 중입니다. Firestore 리스너를 설정하지 않습니다.");
-                meals = []; // 로컬에서만 작동하도록 초기화
-                renderMeals();
-                
-                // 날짜 정보만 UI에 표시
-                const dateStr = formatDate(currentViewDate);
-                const todayStr = formatDate(new Date());
-                currentViewDateDisplay.textContent = dateStr;
-                currentDateDisplay.textContent = dateStr === todayStr ? '오늘' : dateStr;
-                
-                nextDayButton.disabled = dateStr === todayStr;
-                if (dateStr === todayStr) {
-                     nextDayButton.classList.add('opacity-50');
-                     nextDayButton.classList.add('cursor-not-allowed');
-                } else {
-                     nextDayButton.classList.remove('opacity-50');
-                     nextDayButton.classList.remove('cursor-not-allowed');
-                }
-                
+
+        // 현재 날짜의 식단 데이터 로드 (문제 1 해결의 핵심)
+        async function loadMealsForDate(date) {
+            meals = []; // **이전에 입력된 데이터 초기화**
+            renderMeals(); // 목록을 먼저 비움
+            
+            if (!db || !userId) {
+                console.warn("데이터베이스 또는 사용자 ID가 준비되지 않았습니다. 로드 건너뛰기.");
                 return;
             }
-            
-            // 현재 보고 있는 날짜의 데이터를 실시간으로 가져옵니다.
-            const dateStr = formatDate(currentViewDate);
-            const docRef = doc(db, getDailyMealDocPath(dateStr));
 
-            // onSnapshot을 사용하여 실시간으로 데이터 변경 사항을 수신합니다.
-            onSnapshot(docRef, (docSnap) => {
-                if (docSnap.exists()) {
-                    const data = docSnap.data();
-                    // Firestore에 저장된 배열을 가져옵니다.
-                    meals = data.meals || [];
-                } else {
-                    // 해당 날짜의 문서가 없으면 빈 배열로 초기화합니다.
-                    meals = [];
-                }
-                
-                // 데이터가 변경되었으므로 UI를 업데이트합니다.
-                renderMeals();
-                
-            }, (error) => {
-                console.error("Firestore 실시간 업데이트 오류:", error);
-                window.showErrorModal("데이터 로딩 오류", "식단 정보를 불러오는 중 문제가 발생했습니다: " + error.message);
-                meals = [];
-                renderMeals();
-            });
-            
-            // 화면에 현재 보고 있는 날짜를 표시합니다.
-            const todayStr = formatDate(new Date());
-            currentViewDateDisplay.textContent = dateStr;
-            currentDateDisplay.textContent = dateStr === todayStr ? '오늘' : dateStr;
-            
-            // 날짜 이동 버튼 활성화/비활성화
-            nextDayButton.disabled = dateStr === todayStr;
-            if (dateStr === todayStr) {
-                 nextDayButton.classList.add('opacity-50');
-                 nextDayButton.classList.add('cursor-not-allowed');
-            } else {
-                 nextDayButton.classList.remove('opacity-50');
-                 nextDayButton.classList.remove('cursor-not-allowed');
-            }
-        }
-
-        /**
-         * 현재 보고 있는 날짜의 식단 목록을 Firestore에 저장합니다.
-         */
-        async function saveTodaysMeals() {
-            if (!db || !isAuthReady || firebaseConfig === USER_PROVIDED_FIREBASE_CONFIG) {
-                alertBox("경고", "Firebase 설정이 올바르지 않아 데이터를 저장할 수 없습니다.");
-                return;
-            }
-            
             try {
-                const dateStr = formatDate(currentViewDate);
-                const docRef = doc(db, getDailyMealDocPath(dateStr));
-                
-                // Firestore에 저장할 데이터: { meals: [...] } 형태로 저장합니다.
-                await setDoc(docRef, { meals: meals, timestamp: Timestamp.now() }, { merge: true });
+                const collectionPath = getCollectionPath();
+                if (!collectionPath) return;
 
-                alertBox("저장 완료", `${dateStr}의 식단 정보가 성공적으로 저장되었습니다.`);
+                const docRef = window.doc(db, collectionPath, date);
+                const docSnap = await window.getDoc(docRef);
 
-            } catch (e) {
-                console.error("Firestore 저장 오류:", e);
-                window.showErrorModal("저장 오류", "식단 정보를 저장하는 중 문제가 발생했습니다: " + e.message);
+                if (docSnap.exists()) {
+                    meals = docSnap.data().meals || [];
+                    // ⭐️ 날짜 변경 시 모달은 너무 번거로우므로 주석 처리
+                    // showModal("불러오기 완료", `${date}의 저장된 식단 ${meals.length}개를 불러왔습니다.`, false);
+                } else {
+                    meals = [];
+                    // ⭐️ 날짜 변경 시 모달은 너무 번거로우므로 주석 처리
+                    // showModal("불러오기 완료", `${date}에 저장된 식단 기록이 없습니다. 새로운 식단을 입력하세요.`, false);
+                }
+            } catch (error) {
+                console.error("데이터 로드 오류:", error);
+                showModal("데이터 로드 오류", `식단을 불러오는 중 오류가 발생했습니다: ${error.message}`, true);
+                meals = [];
             }
-        }
-        
-        // ========== UI 렌더링 및 로직 ==========
-
-        /**
-         * 식단 항목을 HTML로 생성합니다.
-         */
-        function createMealItemHTML(meal, index) {
-            // Firestore Timestamp 객체가 아닐 경우 Date 객체로 변환 시도 (로컬 테스트 대비)
-            const time = (meal.timestamp && meal.timestamp.toDate) 
-                         ? meal.timestamp.toDate().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }) 
-                         : new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
-
-            return `
-                <div class="meal-item bg-white p-4 rounded-lg shadow-md border-l-4 border-indigo-500 flex items-center justify-between transition duration-200 hover:shadow-lg">
-                    <div class="flex-1 min-w-0">
-                        <p class="text-lg font-semibold text-gray-900 truncate">${meal.name}
-                            <span class="text-xs text-gray-500 ml-2">(${time})</span>
-                        </p>
-                        <div class="text-sm text-gray-600 mt-1 flex flex-wrap gap-x-4">
-                            <span>🔥 ${meal.kcal} Kcal</span>
-                            <span class="text-blue-500">탄: ${meal.carbs}g</span>
-                            <span class="text-green-500">단: ${meal.protein}g</span>
-                            <span class="text-yellow-600">지: ${meal.fat}g</span>
-                        </div>
-                    </div>
-                    <div class="flex space-x-2 ml-4">
-                        <button onclick="window.editMeal(${index})" class="p-2 text-indigo-500 hover:text-indigo-700 transition duration-150 rounded-full hover:bg-indigo-100" title="수정">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                                <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zm-3.182-1.818l-8 8A1 1 0 002 12v3a1 1 0 001 1h3a1 1 0 001-1l8-8-4-4z" />
-                            </svg>
-                        </button>
-                        <button onclick="window.deleteMeal(${index})" class="p-2 text-red-500 hover:text-red-700 transition duration-150 rounded-full hover:bg-red-100" title="삭제">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                                <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 102 0v6a1 1 0 10-2 0V8z" clip-rule="evenodd" />
-                            </svg>
-                        </button>
-                    </div>
-                </div>
-            `;
+            renderMeals();
         }
 
-        /**
-         * 현재 meals 배열을 기반으로 화면을 갱신합니다.
-         */
+
+        // 식단 목록 렌더링 및 합계 계산
         function renderMeals() {
-            let html = '';
+            mealsList.innerHTML = '';
+            
             let totalKcal = 0;
             let totalCarbs = 0;
             let totalProtein = 0;
             let totalFat = 0;
 
-            if (meals.length > 0) {
+            if (meals.length === 0) {
+                noMealsMessage.classList.remove('hidden');
+                mealsList.appendChild(noMealsMessage);
+            } else {
+                noMealsMessage.classList.add('hidden');
+
                 meals.forEach((meal, index) => {
-                    html += createMealItemHTML(meal, index);
+                    const mealItem = document.createElement('div');
+                    mealItem.className = 'flex flex-col sm:flex-row items-start sm:items-center justify-between p-3 bg-white rounded-xl shadow-md border-l-4 border-indigo-400';
+                    mealItem.innerHTML = `
+                        <div class="flex-grow mb-2 sm:mb-0">
+                            <p class="font-bold text-gray-800">${meal.name}</p>
+                            <p class="text-xs text-gray-500">
+                                Kcal: ${meal.kcal} | 탄: ${meal.carbs}g | 단: ${meal.protein}g | 지: ${meal.fat}g
+                            </p>
+                        </div>
+                        <button onclick="window.removeMeal(${index})" 
+                                class="text-red-500 hover:text-red-700 transition-colors p-1 rounded-full text-sm font-medium">
+                            삭제
+                        </button>
+                    `;
+                    mealsList.appendChild(mealItem);
+
                     totalKcal += meal.kcal;
                     totalCarbs += meal.carbs;
                     totalProtein += meal.protein;
                     totalFat += meal.fat;
                 });
-                noMealsMessage.classList.add('hidden');
-            } else {
-                noMealsMessage.classList.remove('hidden');
             }
 
-            mealsList.innerHTML = html;
-            
-            // 합계 업데이트
-            document.getElementById('total-kcal').textContent = totalKcal.toLocaleString();
-            document.getElementById('total-carbs').textContent = totalCarbs.toLocaleString();
-            document.getElementById('total-protein').textContent = totalProtein.toLocaleString();
-            document.getElementById('total-fat').textContent = totalFat.toLocaleString();
+            // 총 합계 업데이트
+            totalsDisplay.kcal.textContent = totalKcal;
+            totalsDisplay.carbs.textContent = totalCarbs;
+            totalsDisplay.protein.textContent = totalProtein;
+            totalsDisplay.fat.textContent = totalFat;
         }
 
-        /**
-         * 식단 추가 버튼 클릭 핸들러입니다.
-         */
+        // 식단 추가
         window.addMeal = function() {
             const name = mealInput.name.value.trim();
-            const dateStr = mealInput.date.value;
             const kcal = parseInt(mealInput.kcal.value) || 0;
             const carbs = parseInt(mealInput.carbs.value) || 0;
             const protein = parseInt(mealInput.protein.value) || 0;
             const fat = parseInt(mealInput.fat.value) || 0;
 
             if (!name || kcal <= 0) {
-                window.showErrorModal("입력 오류", "식단명과 0 이상의 칼로리(Kcal)는 필수 입력 사항입니다.");
+                showModal("입력 오류", "식단명과 0 이상의 칼로리(Kcal)는 필수 입력 사항입니다.", true);
                 return;
             }
-            
+
             const newMeal = {
                 name,
                 kcal,
                 carbs,
                 protein,
                 fat,
-                // Firestore 설정이 없을 경우 일반 Date 객체를 사용
-                timestamp: (firebaseConfig === USER_PROVIDED_FIREBASE_CONFIG) ? new Date() : Timestamp.now() 
+                timestamp: new Date().toISOString() // 입력 시간 기록
             };
 
-            // 현재 보고 있는 날짜와 입력 날짜가 같다면 meals 배열에 바로 추가
-            if (dateStr === formatDate(currentViewDate)) {
-                 meals.push(newMeal);
-                 renderMeals();
-            } else {
-                 // 다른 날짜에 추가하는 경우, 해당 날짜에 대해 Firestore에 바로 저장 시도
-                 // (로컬 더미 설정일 경우, 다른 날짜 저장은 지원하지 않음)
-                 if (firebaseConfig === USER_PROVIDED_FIREBASE_CONFIG) {
-                     alertBox("저장 불가", "Firebase 설정이 없어 다른 날짜에 저장할 수 없습니다. 현재 날짜에 추가해주세요.");
-                     return;
-                 }
-                 saveMealToSpecificDate(dateStr, newMeal);
-            }
-            
-            // 입력 필드 초기화 (날짜 제외)
+            meals.push(newMeal);
+            renderMeals();
+
+            // 입력 필드 초기화 (날짜는 그대로 둠)
             mealInput.name.value = '';
             mealInput.kcal.value = '';
             mealInput.carbs.value = '';
             mealInput.protein.value = '';
             mealInput.fat.value = '';
-            
-            // saveMealToSpecificDate 성공 시 onSnapshot이 자동으로 renderMeals를 호출함.
+            mealInput.name.focus();
         }
-        
-        /**
-         * 현재 보고 있는 날짜와 다른 날짜에 식단을 저장합니다.
-         */
-        async function saveMealToSpecificDate(dateStr, newMeal) {
-            if (!db || !isAuthReady || firebaseConfig === USER_PROVIDED_FIREBASE_CONFIG) {
-                alertBox("인증 오류", "데이터를 저장할 준비가 되지 않았거나 설정이 누락되었습니다.");
+
+        // 식단 삭제
+        window.removeMeal = function(index) {
+            meals.splice(index, 1);
+            renderMeals();
+        }
+
+        // 식단 저장 (setDoc을 사용하여 날짜별로 덮어쓰기)
+        async function saveTodaysMeals() {
+            if (!db || !userId) {
+                showModal("저장 오류", "데이터베이스 연결이 준비되지 않았습니다. 잠시 후 다시 시도해 주세요.", true);
+                return;
+            }
+
+            const date = mealInput.date.value;
+            if (!date) {
+                showModal("저장 오류", "저장할 날짜를 선택해주세요.", true);
                 return;
             }
             
+            const collectionPath = getCollectionPath();
+            if (!collectionPath) return;
+
+            // 저장할 데이터 객체
+            const dataToSave = {
+                meals: meals,
+                totalKcal: parseInt(totalsDisplay.kcal.textContent),
+                totalCarbs: parseInt(totalsDisplay.carbs.textContent),
+                totalProtein: parseInt(totalsDisplay.protein.textContent),
+                totalFat: parseInt(totalsDisplay.fat.textContent),
+                lastUpdated: new Date().toISOString()
+            };
+
             try {
-                const docRef = doc(db, getDailyMealDocPath(dateStr));
-                const docSnap = await getDoc(docRef);
+                // setDoc을 사용하여 해당 날짜 문서에 데이터 저장 (덮어쓰기)
+                const docRef = window.doc(db, collectionPath, date);
+                await window.setDoc(docRef, dataToSave);
+
+                showModal("저장 완료", `${date}의 식단 ${meals.length}개가 성공적으로 저장되었습니다.`, false);
                 
-                let existingMeals = [];
-                if (docSnap.exists()) {
-                    existingMeals = docSnap.data().meals || [];
-                }
-                
-                existingMeals.push(newMeal);
-                
-                await setDoc(docRef, { meals: existingMeals, timestamp: Timestamp.now() }, { merge: true });
-                alertBox("추가 완료", `${dateStr}에 식단이 성공적으로 추가되었습니다.`);
-                
-            } catch (e) {
-                console.error("다른 날짜 식단 저장 오류:", e);
-                window.showErrorModal("저장 오류", "다른 날짜에 식단을 추가하는 중 문제가 발생했습니다: " + e.message);
+                // 저장 후에도 현재 목록은 유지됨 (날짜 이동 시 로드됨)
+            } catch (error) {
+                console.error("데이터 저장 오류:", error);
+                showModal("데이터 저장 오류", `식단을 저장하는 중 오류가 발생했습니다: ${error.message}`, true);
             }
         }
 
 
-        /**
-         * 식단 항목을 삭제합니다.
-         */
-        window.deleteMeal = function(index) {
-            if (confirmBox("식단 삭제", "정말로 이 항목을 삭제하시겠습니까?")) {
-                meals.splice(index, 1);
-                // 로컬/더미 설정일 경우 UI만 갱신
-                if (firebaseConfig === USER_PROVIDED_FIREBASE_CONFIG) {
-                     renderMeals();
-                } else {
-                     // 삭제 후 바로 Firestore에 저장하여 실시간으로 반영
-                     saveTodaysMeals();
-                }
-            }
-        }
+        // 뷰 전환 기능
+        window.switchView = function(viewName) {
+            const dailyInputView = document.getElementById('daily-input-view');
+            const reportView = document.getElementById('report-view');
+            const tabDaily = document.getElementById('tab-daily-input');
+            const tabReport = document.getElementById('tab-report');
 
-        /**
-         * 식단 항목 수정 모달을 띄웁니다.
-         */
-        window.editMeal = function(index) {
-            const meal = meals[index];
-            const editModal = document.getElementById('edit-modal');
-            
-            if (editModal) { // null 체크
-                document.getElementById('edit-meal-name').value = meal.name;
-                document.getElementById('edit-meal-kcal').value = meal.kcal;
-                document.getElementById('edit-meal-carbs').value = meal.carbs;
-                document.getElementById('edit-meal-protein').value = meal.protein;
-                document.getElementById('edit-meal-fat').value = meal.fat;
+            if (viewName === 'daily-input') {
+                dailyInputView.classList.remove('hidden');
+                reportView.classList.add('hidden');
                 
-                // 저장 버튼에 현재 수정할 인덱스를 연결
-                saveEditButton.onclick = () => window.saveEdit(index);
+                tabDaily.classList.add('border-indigo-500', 'text-indigo-600');
+                tabDaily.classList.remove('border-transparent', 'text-gray-500');
+                tabReport.classList.remove('border-indigo-500', 'text-indigo-600');
+                tabReport.classList.add('border-transparent', 'text-gray-500');
 
-                editModal.classList.remove('hidden');
-            } else {
-                 window.showErrorModal("UI 오류", "수정 모달 요소를 찾을 수 없습니다.");
+                // ⭐️ 일일 입력 뷰로 돌아오면 현재 날짜 데이터 다시 로드
+                // (사용자가 '저장 기록 조회' 탭에 갔다가 다시 돌아왔을 때,
+                // 현재 선택된 날짜의 데이터를 다시 불러와서 화면을 동기화합니다.)
+                loadMealsForDate(mealInput.date.value);
+
+            } else if (viewName === 'report') {
+                dailyInputView.classList.add('hidden');
+                reportView.classList.remove('hidden');
+
+                tabReport.classList.add('border-indigo-500', 'text-indigo-600');
+                tabReport.classList.remove('border-transparent', 'text-gray-500');
+                tabDaily.classList.remove('border-indigo-500', 'text-indigo-600');
+                tabDaily.classList.add('border-transparent', 'text-gray-500');
+
+                // ⭐️ 보고서 뷰로 이동하면 기록 로드 시작
+                // (기본 설정된 날짜로 자동 조회)
+                renderReport();
             }
         }
-        
-        /**
-         * 수정된 식단 항목을 저장합니다. (수정 모달 내부에서 호출)
-         */
-        window.saveEdit = function(index) {
-            const name = document.getElementById('edit-meal-name').value.trim();
-            const kcal = parseInt(document.getElementById('edit-meal-kcal').value) || 0;
-            const carbs = parseInt(document.getElementById('edit-meal-carbs').value) || 0;
-            const protein = parseInt(document.getElementById('edit-meal-protein').value) || 0;
-            const fat = parseInt(document.getElementById('edit-meal-fat').value) || 0;
 
-            if (!name || kcal <= 0) {
-                window.showErrorModal("입력 오류", "식단명과 0 이상의 칼로리(Kcal)는 필수 입력 사항입니다.");
+        // ⭐️ 보고서 기록 조회 (기간별 조회 기능으로 수정)
+        async function renderReport() {
+            const reportContent = document.getElementById('report-content');
+            const loadingMessage = document.getElementById('report-loading-message');
+            reportContent.innerHTML = ''; // 기존 내용 초기화
+            loadingMessage.textContent = "저장된 기록을 불러오는 중...";
+            reportContent.appendChild(loadingMessage);
+            loadingMessage.classList.remove('hidden');
+            loadingMessage.classList.remove('text-red-500'); // 오류 스타일 초기화
+            loadingMessage.classList.add('text-gray-500');
+
+            // ⭐️ 기간별 조회 날짜 읽기 ⭐️
+            const startDate = document.getElementById('report-start-date')?.value;
+            const endDate = document.getElementById('report-end-date')?.value;
+
+            if (!startDate || !endDate) {
+                loadingMessage.textContent = "조회할 시작일과 종료일을 선택해주세요.";
+                loadingMessage.classList.add('text-red-500');
+                return;
+            }
+            if (startDate > endDate) {
+                loadingMessage.textContent = "시작일은 종료일보다 이전 날짜여야 합니다.";
+                loadingMessage.classList.add('text-red-500');
+                return;
+            }
+            // ⭐️ --- ⭐️
+
+            if (!db || !userId) {
+                loadingMessage.textContent = "❌ 데이터베이스 연결 실패 또는 사용자 인증 대기 중. '일일 입력' 탭을 확인해 주세요.";
+                loadingMessage.classList.remove('text-gray-500');
+                loadingMessage.classList.add('text-red-500');
                 return;
             }
 
-            meals[index] = { ...meals[index], name, kcal, carbs, protein, fat };
-            
-            // 로컬/더미 설정일 경우 UI만 갱신
-            if (firebaseConfig === USER_PROVIDED_FIREBASE_CONFIG) {
-                 renderMeals();
-            } else {
-                 // 수정 후 바로 Firestore에 저장하여 실시간으로 반영
-                 saveTodaysMeals();
+            try {
+                const collectionPath = getCollectionPath();
+                if (!collectionPath) return;
+
+                // ⭐️ 쿼리 수정: 기간별 조회 ⭐️
+                // Firestore의 'documentId' (문서 ID, 즉 날짜)를 기준으로 범위를 지정합니다.
+                // YYYY-MM-DD 형식의 문자열은 사전순 정렬이 가능합니다.
+                const q = window.query(
+                    window.collection(db, collectionPath),
+                    window.where(window.documentId(), '>=', startDate),
+                    window.where(window.documentId(), '<=', endDate)
+                );
+                // ⭐️ --- ⭐️
+                
+                const querySnapshot = await window.getDocs(q);
+
+                const reportData = [];
+                querySnapshot.forEach((doc) => {
+                    const data = doc.data();
+                    // doc.id가 날짜 (YYYY-MM-DD)
+                    reportData.push({ 
+                        date: doc.id,
+                        ...data
+                    });
+                });
+
+                // 날짜를 기준으로 최신순 정렬
+                reportData.sort((a, b) => b.date.localeCompare(a.date));
+
+                loadingMessage.classList.add('hidden');
+
+                if (reportData.length === 0) {
+                    reportContent.innerHTML = '<p class="text-gray-500 text-center p-10">해당 기간에 저장된 식단 기록이 없습니다.</p>';
+                    return;
+                }
+
+                reportData.forEach(day => {
+                    const dayElement = document.createElement('div');
+                    dayElement.className = 'bg-gray-50 p-4 rounded-lg shadow-sm mb-4 border-t-4 border-blue-400';
+
+                    const totalMeals = day.meals ? day.meals.length : 0;
+                    const totalKcal = day.totalKcal || 0;
+                    const totalCarbs = day.totalCarbs || 0;
+                    const totalProtein = day.totalProtein || 0;
+                    const totalFat = day.totalFat || 0;
+
+                    let mealListHtml = '';
+                    if (day.meals && day.meals.length > 0) {
+                        mealListHtml = day.meals.map(meal => `
+                            <li class="text-sm text-gray-700 ml-4 list-disc">
+                                ${meal.name}: ${meal.kcal} Kcal (탄:${meal.carbs}g, 단:${meal.protein}g, 지:${meal.fat}g)
+                            </li>
+                        `).join('');
+                    } else {
+                        mealListHtml = '<li class="text-sm text-gray-500 ml-4">이날은 상세 기록이 없습니다.</li>';
+                    }
+
+                    dayElement.innerHTML = `
+                        <h3 class="text-xl font-bold text-blue-700 mb-2">${day.date}</h3>
+                        <div class="grid grid-cols-2 sm:grid-cols-5 gap-2 text-sm font-medium text-gray-600 mb-3 border-b pb-2">
+                            <p>총 식단: <span class="text-blue-500 font-semibold">${totalMeals}건</span></p>
+                            <p>총 Kcal: <span class="text-blue-500 font-semibold">${totalKcal}</span></p>
+                            <p>총 탄수화물(g): <span class="text-blue-500 font-semibold">${totalCarbs}</span></p>
+                            <p>총 단백질(g): <span class="text-blue-500 font-semibold">${totalProtein}</span></p>
+                            <p>총 지방(g): <span class="text-blue-500 font-semibold">${totalFat}</span></p>
+                        </div>
+                        <h4 class="font-semibold text-gray-700 mb-1">상세 식단 항목:</h4>
+                        <ul class="space-y-1">${mealListHtml}</ul>
+                    `;
+                    reportContent.appendChild(dayElement);
+                });
+
+            } catch (error) {
+                console.error("보고서 조회 오류:", error);
+                reportContent.innerHTML = `<p class="text-red-500 text-center p-10">
+                    ❌ 기록을 불러오는 중 심각한 오류가 발생했습니다: ${error.message}
+                    <br><br>
+                    (참고: Firestore 보안 규칙에서 'list' 권한이 허용되었는지 확인해 보세요.)
+                </p>`;
             }
-            
-            window.hideEditModal();
-        }
-        
-        // ========== 날짜 이동 로직 ==========
-        
-        /**
-         * 날짜를 변경하고 데이터 리스너를 재설정합니다.
-         * @param {number} days - 변경할 일 수 (이전 날짜: -1, 다음 날짜: +1)
-         */
-        function changeDate(days) {
-            // currentViewDate는 Date 객체이므로 setDate를 사용
-            currentViewDate.setDate(currentViewDate.getDate() + days);
-            // setDate가 월과 연도를 자동으로 조정해주지만, 시간을 0으로 초기화하여 시차 문제를 방지
-            currentViewDate.setHours(0, 0, 0, 0); 
-            
-            // 현재 보고 있는 날짜에 맞춰 데이터 리스너 재설정
-            setupDataListener();
         }
 
-        // ========== 커스텀 알림/확인 상자 (alert/confirm 대체) ==========
-        
-        // alert() 대체 함수 (간단한 메시지 박스)
-        function alertBox(title, message) {
-            window.showErrorModal(title, message); // 재사용
-            // 확인 버튼에 error-modal 닫는 함수를 연결
-            const okButton = document.querySelector('#error-modal button[onclick="window.hideErrorModal()"]');
-            if(okButton) okButton.onclick = window.hideErrorModal;
-        }
 
-        // confirm() 대체 함수 (임시로 브라우저 기본 confirm 사용)
-        function confirmBox(title, message) {
-            // 실제 앱에서는 사용자 정의 모달을 사용해야 하지만, 여기서는 개발 편의상 임시로 기본 confirm 사용
-            return confirm(`${title}\n\n${message}`);
-        }
-        
-        // ========== 이벤트 리스너 및 초기화 ==========
-        
+        // 이벤트 리스너
         window.onload = function() {
             // 날짜 입력 필드의 기본값을 오늘 날짜로 설정
             const today = new Date().toISOString().substring(0, 10);
             mealInput.date.value = today;
-            currentViewDate.setHours(0, 0, 0, 0); // 오늘 날짜로 초기화
+
+            // ⭐️ 보고서 날짜 기본값 설정 (이번 달 1일 ~ 오늘) ⭐️
+            const reportStartDate = document.getElementById('report-start-date');
+            const reportEndDate = document.getElementById('report-end-date');
+            // 'T' 앞까지만 자르기 (YYYY-MM-DD)
+            const firstDayOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().substring(0, 10);
             
+            if(reportStartDate) reportStartDate.value = firstDayOfMonth;
+            if(reportEndDate) reportEndDate.value = today;
+            // ⭐️ --- ⭐️
+
+            // 1. 날짜 변경 시 해당 날짜 데이터 로드
+            mealInput.date.addEventListener('change', (e) => loadMealsForDate(e.target.value));
+
+            // 2. 버튼 클릭 이벤트 리스너 연결
             mealInput.addButton.addEventListener('click', window.addMeal);
             saveButton.addEventListener('click', saveTodaysMeals);
             
-            prevDayButton.addEventListener('click', () => changeDate(-1));
-            nextDayButton.addEventListener('click', () => changeDate(1));
-            
-            // 초기 렌더링 및 Firebase 초기화
-            renderMeals();
+            // 3. Firebase 초기화 및 인증 시작
             initializeFirebase();
         };
 
