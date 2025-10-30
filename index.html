@@ -22,7 +22,10 @@
             appId: "1:739384992411:web:1e47f734197cd6dff89c3e"
         };
         
-        // 3. 변수 초기화 (URL에서 auth_token 읽어오기)
+        // ⭐️⭐️⭐️ 3. ID 고정 변수 설정 ⭐️⭐️⭐️
+        const HARDCODED_USER_ID = "cDvRxKkPIXP0IG8ffu4UcCpagX53";
+        // ⭐️⭐️⭐️ ----------------------------- ⭐️⭐️⭐️
+
         const appId = firebaseConfig.projectId; 
         
         function getQueryParam(param) {
@@ -48,7 +51,6 @@
         window.getDocs = getDocs;
         window.setLogLevel = setLogLevel;
         window.setPersistence = setPersistence;
-        // ⭐️⭐️⭐️ browserLocalPersistence 추가 ⭐️⭐️⭐️
         window.browserSessionPersistence = browserSessionPersistence;
         window.browserLocalPersistence = browserLocalPersistence;
         window.where = where;
@@ -57,6 +59,8 @@
         // 5. 인스턴스/설정 반환 함수
         window.getFirebaseInstances = () => ({ app, db, auth, userId, appId, initialAuthToken, config: firebaseConfig });
         window.setUserId = (id) => { userId = id; };
+        // ⭐️ 고정된 ID를 전역에서 바로 접근 가능하도록 추가
+        window.getHardcodedId = () => HARDCODED_USER_ID; 
     </script>
     
     <style>
@@ -117,7 +121,7 @@
                         <input type="date" id="meal-date" class="p-2 border border-gray-300 rounded-lg w-full sm:w-auto shadow-sm focus:ring-indigo-500 focus:border-indigo-500">
                     </div>
                     <div class="text-xs text-gray-500 text-right w-full sm:w-auto">
-                        <span class="font-semibold">사용자 ID (공유 가능):</span>
+                        <span class="font-semibold">사용자 ID (고정된 공유 ID):</span>
                         <p id="user-id-display" class="break-all mt-1"></p>
                     </div>
                 </div>
@@ -164,13 +168,13 @@
                 <h2 class="text-2xl font-bold text-gray-800">식단 저장 기록</h2>
                 
                 <div class="bg-yellow-50 p-4 rounded-xl shadow-inner border-l-4 border-yellow-500">
-                    <h3 class="text-lg font-semibold text-yellow-800 mb-2">🤝 친구 ID로 기록 조회</h3>
+                    <h3 class="text-lg font-semibold text-yellow-800 mb-2">🤝 친구 ID로 기록 조회 (현재 고정된 ID만 조회 가능)</h3>
                     <div class="flex gap-2">
-                        <input type="text" id="friend-user-id" placeholder="공유 받은 친구의 사용자 ID를 입력하세요 (비워두면 본인 조회)" 
+                        <input type="text" id="friend-user-id" placeholder="ID를 입력해도 고정된 ID의 기록만 조회됩니다." 
                                class="p-2 border border-yellow-300 rounded-lg w-full shadow-sm text-sm focus:ring-yellow-500 focus:border-yellow-500">
                         <button id="self-search-button"
                                 class="bg-gray-300 text-gray-700 py-2 px-4 rounded-xl hover:bg-gray-400 transition-colors duration-200 font-medium shadow-md flex-shrink-0 text-sm">
-                            본인 조회
+                            고정 ID 조회
                         </button>
                     </div>
                 </div>
@@ -267,6 +271,7 @@
                 appId = instances.appId; 
                 const firebaseConfig = instances.config; 
                 const initialAuthToken = instances.initialAuthToken; 
+                const HARDCODED_USER_ID = window.getHardcodedId(); // 고정 ID 가져오기
                 
                 if (!firebaseConfig || !firebaseConfig.projectId) {
                     throw new Error("Firebase 설정이 올바르지 않습니다.");
@@ -276,9 +281,8 @@
                 db = window.getFirestore(app);
                 auth = window.getAuth(app);
 
-                // ⭐️⭐️⭐️ 여기가 핵심 수정: browserSessionPersistence -> browserLocalPersistence ⭐️⭐️⭐️
+                // ⭐️ ID가 바뀌지 않도록 Local Persistence 사용 ⭐️
                 await window.setPersistence(auth, window.browserLocalPersistence);
-                // ⭐️⭐️⭐️ ------------------------------------------------------------- ⭐️⭐️⭐️
 
                 try {
                     if (initialAuthToken) {
@@ -296,13 +300,15 @@
                     const userIdDisplay = document.getElementById('user-id-display');
 
                     if (user) {
-                        userId = user.uid;
+                        // ⭐️⭐️⭐️ ID를 고정된 값으로 강제 설정 ⭐️⭐️⭐️
+                        userId = HARDCODED_USER_ID;
                         window.setUserId(userId);
+                        
                         userIdDisplay.textContent = userId;
                         
                         statusMessage.classList.remove('bg-red-100', 'text-red-600', 'bg-yellow-100', 'text-yellow-600');
                         statusMessage.classList.add('bg-green-100', 'text-green-600');
-                        statusMessage.textContent = `✅ 데이터베이스 연결 완료 (User ID: ${userId.substring(0, 8)}...)`;
+                        statusMessage.textContent = `✅ 데이터베이스 연결 완료 (Target ID: ${userId.substring(0, 8)}...)`;
 
                         loadMealsForDate(mealInput.date.value);
                     } else {
@@ -311,7 +317,6 @@
                         statusMessage.classList.remove('bg-green-100', 'text-green-600', 'bg-yellow-100', 'text-yellow-600');
                         statusMessage.classList.add('bg-red-100', 'text-red-600');
                         statusMessage.textContent = `❌ 데이터베이스 연결 실패: 인증 불가`;
-                        // 브라우저 닫고 다시 실행할 경우를 대비하여 오류 모달은 띄우지 않음
                     }
                 });
 
@@ -326,7 +331,8 @@
         
         // Firestore 컬렉션 경로 생성 함수
         function getCollectionPath(targetUserId) {
-            const id = targetUserId || userId; 
+            // ID 고정으로 인해 targetUserId는 항상 HARDCODED_USER_ID입니다.
+            const id = window.getHardcodedId(); 
             if (!id) {
                 console.error("Target User ID is not defined.");
                 return null;
@@ -363,7 +369,7 @@
             renderMeals();
         }
 
-        // 식단 목록 렌더링 및 합계 계산 (생략... 이전 코드와 동일)
+        // 식단 목록 렌더링 및 합계 계산
         function renderMeals() {
             mealsList.innerHTML = '';
             
@@ -415,7 +421,7 @@
             totalsDisplay.fat.textContent = totalFat;
         }
 
-        // 식단 수정 함수 (생략... 이전 코드와 동일)
+        // 식단 수정 함수
         window.editMeal = function(index) {
             if (index < 0 || index >= meals.length) return;
             const mealToEdit = meals[index];
@@ -429,7 +435,7 @@
             showModal("수정 모드", `${mealToEdit.name} 항목이 입력 필드에 로드되었습니다. 내용을 수정한 후 [+ 식단 추가] 버튼을 다시 누르세요.`, false);
         }
 
-        // 식단 추가 (생략... 이전 코드와 동일)
+        // 식단 추가
         window.addMeal = function() {
             const name = mealInput.name.value.trim();
             const kcal = parseInt(mealInput.kcal.value) || 0;
@@ -463,13 +469,13 @@
             mealInput.name.focus();
         }
 
-        // 식단 삭제 (생략... 이전 코드와 동일)
+        // 식단 삭제
         window.removeMeal = function(index) {
             meals.splice(index, 1);
             renderMeals();
         }
 
-        // 식단 저장 (생략... 이전 코드와 동일)
+        // 식단 저장
         async function saveTodaysMeals() {
             if (!db || !userId) {
                 showModal("저장 오류", "데이터베이스 연결이 준비되지 않았습니다. 잠시 후 다시 시도해 주세요.", true);
@@ -482,7 +488,8 @@
                 return;
             }
             
-            const collectionPath = getCollectionPath(userId);
+            // 저장 경로는 이제 고정된 ID를 사용합니다.
+            const collectionPath = getCollectionPath(userId); 
             if (!collectionPath) return;
 
             // 저장할 데이터 객체
@@ -509,7 +516,7 @@
         }
 
 
-        // 뷰 전환 기능 (생략... 이전 코드와 동일)
+        // 뷰 전환 기능
         window.switchView = function(viewName) {
             const dailyInputView = document.getElementById('daily-input-view');
             const reportView = document.getElementById('report-view');
@@ -541,7 +548,7 @@
             }
         }
 
-        // 보고서 기록 조회 함수 (친구 ID로 조회)
+        // 보고서 기록 조회 함수 (ID를 입력해도 고정된 ID만 조회)
         window.renderReport = async function() {
             const reportContent = document.getElementById('report-content');
             const loadingMessage = document.getElementById('report-loading-message');
@@ -553,13 +560,12 @@
             loadingMessage.classList.remove('text-red-500'); 
             loadingMessage.classList.add('text-gray-500');
 
-            // 1. 조회할 사용자 ID 결정 (친구 ID 입력 필드를 먼저 확인)
-            const targetFriendId = friendIdInput.value.trim();
-            const targetUserId = targetFriendId || userId; 
-            const isFriendView = !!targetFriendId; 
+            // 1. 조회할 사용자 ID는 항상 고정 ID입니다.
+            const HARDCODED_USER_ID = window.getHardcodedId();
+            const targetUserId = HARDCODED_USER_ID; 
             
             const displayUserId = targetUserId ? targetUserId.substring(0, 8) + '...' : 'ID 없음';
-            const viewTitle = isFriendView ? `친구 (${displayUserId})의 기록` : `본인 (${userId ? userId.substring(0, 8) + '...' : 'ID 없음'})의 기록`;
+            const viewTitle = `공유 ID (${displayUserId})의 기록`;
 
             // 2. 기간별 조회 날짜 읽기
             const startDate = document.getElementById('report-start-date')?.value;
@@ -587,18 +593,6 @@
                 // 3. 컬렉션 경로 생성 및 쿼리
                 const collectionPath = getCollectionPath(targetUserId);
                 if (!collectionPath) return;
-                
-                // ⭐️⭐️⭐️ 디버그 정보 출력 시작 ⭐️⭐️⭐️
-                const debugInfo = document.createElement('div');
-                debugInfo.className = 'bg-red-50 p-3 rounded-lg text-sm text-red-700 font-mono mb-4';
-                debugInfo.innerHTML = `
-                    <p><strong>[디버그 정보]</strong></p>
-                    <p>조회 대상 ID: ${targetUserId}</p>
-                    <p>조회 컬렉션 경로: ${collectionPath}</p>
-                    <p>조회 기간: ${startDate} ~ ${endDate}</p>
-                `;
-                reportContent.appendChild(debugInfo); // 보고서 내용 위에 디버그 정보 추가
-                // ⭐️⭐️⭐️ 디버그 정보 출력 끝 ⭐️⭐️⭐️
 
                 const q = window.query(
                     window.collection(db, collectionPath),
@@ -619,12 +613,12 @@
                 loadingMessage.classList.add('hidden');
 
                 if (reportData.length === 0) {
-                    reportContent.innerHTML += `<p class="text-gray-500 text-center p-10">${viewTitle}: 해당 기간에 저장된 식단 기록이 없습니다. (ID와 경로가 올바른지 확인하세요)</p>`;
+                    reportContent.innerHTML = `<p class="text-gray-500 text-center p-10">${viewTitle}: 해당 기간에 저장된 식단 기록이 없습니다.</p>`;
                     return;
                 }
                 
                 // 5. 결과 렌더링
-                reportContent.innerHTML += `<h3 class="text-xl font-bold text-gray-700 mb-4">${viewTitle}</h3>`;
+                reportContent.innerHTML = `<h3 class="text-xl font-bold text-gray-700 mb-4">${viewTitle}</h3>`;
 
                 reportData.forEach(day => {
                     const dayElement = document.createElement('div');
@@ -667,13 +661,13 @@
                 reportContent.innerHTML += `<p class="text-red-500 text-center p-10">
                     ❌ 기록을 불러오는 중 오류가 발생했습니다: ${error.message}
                     <br><br>
-                    (가장 일반적인 원인은 **Firebase 보안 규칙**의 **read** 권한 부족입니다.)
+                    (Firebase 규칙이 **read, write: if request.auth != null;** 로 설정되어 있는지 확인해 주세요.)
                 </p>`;
             }
         }
 
 
-        // 이벤트 리스너 및 초기화 (생략... 이전 코드와 동일)
+        // 이벤트 리스너 및 초기화
         window.onload = function() {
             // 날짜 기본값 설정
             const today = new Date().toISOString().substring(0, 10);
@@ -692,8 +686,9 @@
             saveButton.addEventListener('click', saveTodaysMeals);
             
             reportSearchButton.addEventListener('click', window.renderReport);
+            // 본인 조회 버튼도 이제 고정 ID만 조회하도록 변경
             selfSearchButton.addEventListener('click', () => {
-                friendIdInput.value = ''; // 본인 조회 버튼 클릭 시 ID 필드를 비움
+                friendIdInput.value = ''; 
                 window.renderReport();
             });
             
