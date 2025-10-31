@@ -853,6 +853,7 @@
             const buttonText = postData.id ? '수정 완료' : '작성 완료';
 
             // 폼 HTML을 삽입
+            // ⭐️⭐️⭐️ 중요 수정: textarea 태그 내부의 불필요한 공백/줄바꿈 제거 ⭐️⭐️⭐️
             const formHtml = `
                 <div class="p-6 bg-white rounded-xl shadow-xl space-y-4 border-t-4 border-board-color">
                     <h3 class="text-2xl font-bold text-board-color">${formTitle}</h3>
