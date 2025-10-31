@@ -772,10 +772,8 @@
                     // 수정/삭제 버튼은 현재 로그인된 ID(고정 ID)와 작성자 ID가 일치할 때만 표시
                     const isAuthor = (fullAuthorId === userId);
                     
-                    // ⭐️ 수정된 부분: post 객체를 JSON 문자열로 변환하여 안전하게 전달 ⭐️
-                    // 1. JSON.stringify로 객체를 문자열로 만들고
-                    // 2. HTML 속성으로 전달할 때 문제가 될 수 있는 큰따옴표(")를 &quot;로 치환합니다.
-                    const postJsonString = JSON.stringify(post).replace(/"/g, '&quot;');
+                    // ⭐️ 수정된 부분: openPostForm에 ID만 전달하도록 변경 ⭐️
+                    const postIDString = post.id;
                     
                     const detailHtml = `
                         <div class="space-y-4">
@@ -796,7 +794,7 @@
                                 
                                 <div class="flex justify-end space-x-3 pt-4">
                                     ${isAuthor ? `
-                                        <button onclick="window.openPostForm('${postJsonString}')" 
+                                        <button onclick="window.openPostForm('${postIDString}')" 
                                                 class="bg-blue-500 text-white py-2 px-4 rounded-xl hover:bg-blue-600 transition-colors font-medium">
                                             수정
                                         </button>
@@ -822,37 +820,46 @@
             }
         }
         
-        // 3. 게시물 작성/수정 폼 열기
-        window.openPostForm = function(postDataString = null) {
-            let postData = null;
-            if (postDataString) {
+        // 3. 게시물 작성/수정 폼 열기 (수정된 로직)
+        window.openPostForm = async function(postId = null) {
+            let postData = { id: null, title: '', content: '' };
+            
+            // 수정 모드인 경우 (postId가 전달됨)
+            if (postId && postId !== 'null') {
+                communityMainContent.innerHTML = `<p class="text-gray-500 text-center p-10">수정할 게시물 데이터를 불러오는 중...</p>`;
+                
                 try {
-                    // ⭐️ 수정된 파싱 로직 ⭐️
-                    // 1. &quot;를 "로 복구 (HTML 엔티티 디코딩)
-                    const cleanedString = postDataString.replace(/&quot;/g, '"');
-                    // 2. JSON.parse를 시도합니다.
-                    postData = JSON.parse(cleanedString);
+                    // 데이터베이스에서 게시물을 다시 조회합니다.
+                    const docRef = window.doc(db, getCommunityCollectionPath(), postId);
+                    const docSnap = await window.getDoc(docRef);
+
+                    if (docSnap.exists()) {
+                        postData = { id: docSnap.id, ...docSnap.data() };
+                    } else {
+                        showModal("오류", "수정할 게시물을 찾을 수 없습니다.", true);
+                        window.renderCommunityView();
+                        return;
+                    }
                 } catch (e) {
-                    console.error("게시물 데이터 파싱 오류:", e);
-                    // 오류 발생 시 모달 표시
+                    console.error("게시물 데이터 로드 오류:", e);
                     showModal("오류 발생", "게시물 데이터를 불러오는 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.", true);
-                    postData = null;
+                    window.renderCommunityView();
+                    return;
                 }
             }
-            
-            currentEditingPost = postData ? postData.id : null;
-            const title = postData ? postData.title : '';
-            const content = postData ? postData.content : '';
-            const formTitle = postData ? '글 수정하기' : '새 글 작성하기';
-            const buttonText = postData ? '수정 완료' : '작성 완료';
 
+            currentEditingPost = postData.id;
+            const formTitle = postData.id ? '글 수정하기' : '새 글 작성하기';
+            const buttonText = postData.id ? '수정 완료' : '작성 완료';
+
+            // 폼 HTML을 삽입
             const formHtml = `
                 <div class="p-6 bg-white rounded-xl shadow-xl space-y-4 border-t-4 border-board-color">
                     <h3 class="text-2xl font-bold text-board-color">${formTitle}</h3>
                     
                     <div>
                         <label for="post-title-input" class="block text-sm font-medium text-gray-700 mb-1">제목:</label>
-                        <input type="text" id="post-title-input" value="${title}" 
+                        <input type="text" id="post-title-input" value="${postData.title}" 
                                placeholder="직관적이고 눈에 띄는 제목을 입력하세요."
                                class="w-full p-3 border border-gray-300 rounded-lg focus:ring-board-color focus:border-board-color text-lg font-semibold">
                     </div>
@@ -860,7 +867,7 @@
                     <div>
                         <label for="post-content-input" class="block text-sm font-medium text-gray-700 mb-1">내용:</label>
                         <textarea id="post-content-input" placeholder="유용한 다이어트 정보를 공유해주세요."
-                                  class="w-full p-3 border border-gray-300 rounded-lg focus:ring-board-color focus:border-board-color min-h-[300px] text-base leading-relaxed">${content}</textarea>
+                                  class="w-full p-3 border border-gray-300 rounded-lg focus:ring-board-color focus:border-board-color min-h-[300px] text-base leading-relaxed">${postData.content}</textarea>
                     </div>
                     
                     <div class="flex justify-end space-x-3 pt-4">
@@ -878,7 +885,7 @@
             communityMainContent.innerHTML = formHtml;
         }
 
-        // 4. 게시물 저장/수정 처리
+        // 4. 게시물 저장/수정 처리 (이전 코드와 동일)
         window.savePost = async function(postId) {
             const titleInput = document.getElementById('post-title-input');
             const contentInput = document.getElementById('post-content-input');
@@ -927,7 +934,7 @@
             }
         }
         
-        // 5. 게시물 삭제 처리
+        // 5. 게시물 삭제 처리 (이전 코드와 동일)
         window.deletePost = async function(postId) {
             if (!confirm(`정말로 이 게시물(${postId.substring(0, 8)}...)을 삭제하시겠습니까?`)) {
                 return;
