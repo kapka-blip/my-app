@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>일일 식단 자동 계산기 (UI 개선 및 게시판 추가)</title>
-    <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -23,7 +22,6 @@
         }
     </script>
 
-    <!-- ⭐️ 1. Firebase Import 및 Config 설정 블록 ⭐️ -->
     <script type="module">
         // 1. 필요한 함수 임포트
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
@@ -96,7 +94,6 @@
             일일 식단 자동 계산기 (공유용)
         </h1>
 
-        <!-- 탭 네비게이션 -->
         <div class="flex border-b border-gray-200 mb-6">
             <button id="tab-daily-input" onclick="switchView('daily-input')"
                     class="px-4 py-2 text-sm sm:text-base font-medium rounded-t-lg transition-colors duration-150 border-b-2 border-indigo-500 text-indigo-600">
@@ -106,21 +103,18 @@
                     class="px-4 py-2 text-sm sm:text-base font-medium rounded-t-lg transition-colors duration-150 border-b-2 border-transparent text-gray-500 hover:text-indigo-600 hover:border-indigo-500">
                 저장 기록 조회
             </button>
-            <!-- ⭐️ NEW TAB: 게시판 ⭐️ -->
-             <button id="tab-community" onclick="switchView('community')"
+            <button id="tab-community" onclick="switchView('community')"
                     class="px-4 py-2 text-sm sm:text-base font-medium rounded-t-lg transition-colors duration-150 border-b-2 border-transparent text-gray-500 hover:text-board-color hover:border-board-color">
                 다이어트 정보 게시판
             </button>
         </div>
 
-        <!-- 인증 상태 메시지 -->
         <div id="auth-status-message" class="text-center p-3 mb-4 rounded-lg text-sm transition-opacity duration-300 bg-red-100 text-red-600">
             데이터베이스 연결 중...
         </div>
         
         <div id="view-container">
             
-            <!-- 일일 입력 뷰 -->
             <div id="daily-input-view" class="space-y-6">
                 <div class="flex flex-col sm:flex-row justify-between items-center bg-gray-50 p-4 rounded-xl shadow-inner">
                     <div class="mb-2 sm:mb-0">
@@ -133,7 +127,6 @@
                     </div>
                 </div>
 
-                <!-- 식단 입력 폼 -->
                 <div class="bg-indigo-50 p-4 rounded-xl shadow-lg">
                     <h2 class="text-xl font-semibold text-indigo-800 mb-4">식단 입력</h2>
                     <div class="grid grid-cols-2 sm:grid-cols-6 gap-3">
@@ -149,14 +142,12 @@
                     </button>
                 </div>
 
-                <!-- 식단 목록 및 합계 -->
                 <div class="space-y-4">
                     <h2 class="text-xl font-semibold text-gray-800 border-b pb-2">오늘의 식단 목록</h2>
                     <div id="meals-list" class="space-y-3">
                         <p class="text-gray-500 text-center p-4" id="no-meals-message">추가된 식단이 없습니다.</p>
                     </div>
 
-                    <!-- ⭐️ UI 개선: 총 합계 (크기 2배 이상, 디자인 변경) ⭐️ -->
                     <div id="totals" class="bg-white border-2 border-green-500 p-4 rounded-xl shadow-lg font-bold text-gray-800">
                         <h3 class="text-xl sm:text-2xl mb-3 text-green-700">✅ 총 합계</h3>
                         <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-center">
@@ -186,7 +177,6 @@
                 </div>
             </div>
 
-            <!-- 저장 기록 조회 뷰 -->
             <div id="report-view" class="hidden space-y-6">
                 <h2 class="text-2xl font-bold text-gray-800">식단 저장 기록</h2>
                 
@@ -216,7 +206,6 @@
                         기록 조회
                     </button>
                 </div>
-                <!-- 보고서 내용 표시 영역 -->
                 <div id="report-content" class="bg-white rounded-xl shadow-inner p-4 max-h-[60vh] overflow-y-auto">
                     <p class="text-gray-500 text-center p-10" id="report-loading-message">
                         저장된 기록을 불러오는 중...
@@ -224,11 +213,9 @@
                 </div>
             </div>
 
-            <!-- ⭐️ NEW VIEW: 게시판 뷰 ⭐️ -->
             <div id="community-view" class="hidden space-y-6">
                 <h2 class="text-2xl font-bold text-gray-800">다이어트 정보 게시판</h2>
                 <div id="community-main-content" class="min-h-[50vh] bg-gray-50 p-4 rounded-xl shadow-inner overflow-y-auto">
-                    <!-- Content will be injected here: list, detail, or form -->
                     <p class="text-gray-500 text-center p-10">게시판 로드 중...</p>
                 </div>
             </div>
@@ -237,7 +224,6 @@
         
     </div>
 
-    <!-- 모달 (Modal) 컨테이너 -->
     <div id="modal-container" class="hidden fixed inset-0 bg-gray-900 bg-opacity-50 z-50 flex items-center justify-center p-4" onclick="document.getElementById('modal-container').classList.add('hidden');">
         <div id="modal-content" class="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm transform transition-all duration-300 scale-100" onclick="event.stopPropagation();">
             <h3 id="modal-title" class="text-xl font-bold mb-3 text-red-600">제목</h3>
@@ -786,6 +772,9 @@
                     // 수정/삭제 버튼은 현재 로그인된 ID(고정 ID)와 작성자 ID가 일치할 때만 표시
                     const isAuthor = (fullAuthorId === userId);
                     
+                    // ⭐️ 수정된 부분: post 객체를 JSON 문자열로 변환하여 안전하게 전달 ⭐️
+                    const postJsonString = JSON.stringify(post).replace(/"/g, '&quot;');
+                    
                     const detailHtml = `
                         <div class="space-y-4">
                             <button onclick="window.renderCommunityView()" 
@@ -805,7 +794,7 @@
                                 
                                 <div class="flex justify-end space-x-3 pt-4">
                                     ${isAuthor ? `
-                                        <button onclick="window.openPostForm(post)" 
+                                        <button onclick="window.openPostForm('${postJsonString}')" 
                                                 class="bg-blue-500 text-white py-2 px-4 rounded-xl hover:bg-blue-600 transition-colors font-medium">
                                             수정
                                         </button>
@@ -832,7 +821,18 @@
         }
         
         // 3. 게시물 작성/수정 폼 열기
-        window.openPostForm = function(postData = null) {
+        window.openPostForm = function(postDataString = null) {
+            let postData = null;
+            if (postDataString) {
+                try {
+                    // 전달받은 문자열을 객체로 다시 파싱
+                    postData = JSON.parse(postDataString.replace(/&quot;/g, '"'));
+                } catch (e) {
+                    console.error("게시물 데이터 파싱 오류:", e);
+                    postData = null;
+                }
+            }
+            
             currentEditingPost = postData ? postData.id : null;
             const title = postData ? postData.title : '';
             const content = postData ? postData.content : '';
