@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>일일 식단 자동 계산기 (UI 개선)</title>
+    <title>일일 식단 자동 계산기 (UI 개선 및 게시판 추가)</title>
+    <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -15,17 +16,20 @@
                         'carbs-color': '#F59E0B', // Amber-500
                         'protein-color': '#10B981', // Emerald-500
                         'fat-color': '#3B82F6', // Blue-500
+                        'board-color': '#EC4899', // Pink-500
                     }
                 }
             }
         }
     </script>
 
+    <!-- ⭐️ 1. Firebase Import 및 Config 설정 블록 ⭐️ -->
     <script type="module">
         // 1. 필요한 함수 임포트
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, onAuthStateChanged, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, getDoc, setDoc, collection, query, getDocs, where, documentId } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        // deleteDoc 함수 추가
+        import { getFirestore, doc, getDoc, setDoc, collection, query, getDocs, where, documentId, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // 2. Firebase 설정
         const firebaseConfig = {
@@ -61,6 +65,7 @@
         window.browserLocalPersistence = browserLocalPersistence;
         window.where = where;
         window.documentId = documentId;
+        window.deleteDoc = deleteDoc; // deleteDoc 함수 추가
         
         // 5. 인스턴스/설정 반환 및 ID 관리 함수
         window.setUserId = (id) => { userId = id; };
@@ -75,9 +80,12 @@
         input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
         input[type=number] { -moz-appearance: textfield; }
         /* 보고서 스크롤바 스타일링 */
-        #report-content::-webkit-scrollbar { width: 8px; }
-        #report-content::-webkit-scrollbar-thumb { background: #9ca3af; border-radius: 4px; }
-        #report-content::-webkit-scrollbar-track { background: #f3f4f6; }
+        #report-content::-webkit-scrollbar,
+        #community-main-content::-webkit-scrollbar { width: 8px; }
+        #report-content::-webkit-scrollbar-thumb,
+        #community-main-content::-webkit-scrollbar-thumb { background: #9ca3af; border-radius: 4px; }
+        #report-content::-webkit-scrollbar-track,
+        #community-main-content::-webkit-scrollbar-track { background: #f3f4f6; }
     </style>
 </head>
 <body class="bg-gray-100 flex items-center justify-center min-h-screen p-4">
@@ -88,6 +96,7 @@
             일일 식단 자동 계산기 (공유용)
         </h1>
 
+        <!-- 탭 네비게이션 -->
         <div class="flex border-b border-gray-200 mb-6">
             <button id="tab-daily-input" onclick="switchView('daily-input')"
                     class="px-4 py-2 text-sm sm:text-base font-medium rounded-t-lg transition-colors duration-150 border-b-2 border-indigo-500 text-indigo-600">
@@ -97,14 +106,21 @@
                     class="px-4 py-2 text-sm sm:text-base font-medium rounded-t-lg transition-colors duration-150 border-b-2 border-transparent text-gray-500 hover:text-indigo-600 hover:border-indigo-500">
                 저장 기록 조회
             </button>
+            <!-- ⭐️ NEW TAB: 게시판 ⭐️ -->
+             <button id="tab-community" onclick="switchView('community')"
+                    class="px-4 py-2 text-sm sm:text-base font-medium rounded-t-lg transition-colors duration-150 border-b-2 border-transparent text-gray-500 hover:text-board-color hover:border-board-color">
+                다이어트 정보 게시판
+            </button>
         </div>
 
+        <!-- 인증 상태 메시지 -->
         <div id="auth-status-message" class="text-center p-3 mb-4 rounded-lg text-sm transition-opacity duration-300 bg-red-100 text-red-600">
             데이터베이스 연결 중...
         </div>
         
         <div id="view-container">
             
+            <!-- 일일 입력 뷰 -->
             <div id="daily-input-view" class="space-y-6">
                 <div class="flex flex-col sm:flex-row justify-between items-center bg-gray-50 p-4 rounded-xl shadow-inner">
                     <div class="mb-2 sm:mb-0">
@@ -117,6 +133,7 @@
                     </div>
                 </div>
 
+                <!-- 식단 입력 폼 -->
                 <div class="bg-indigo-50 p-4 rounded-xl shadow-lg">
                     <h2 class="text-xl font-semibold text-indigo-800 mb-4">식단 입력</h2>
                     <div class="grid grid-cols-2 sm:grid-cols-6 gap-3">
@@ -132,12 +149,14 @@
                     </button>
                 </div>
 
+                <!-- 식단 목록 및 합계 -->
                 <div class="space-y-4">
                     <h2 class="text-xl font-semibold text-gray-800 border-b pb-2">오늘의 식단 목록</h2>
                     <div id="meals-list" class="space-y-3">
                         <p class="text-gray-500 text-center p-4" id="no-meals-message">추가된 식단이 없습니다.</p>
                     </div>
 
+                    <!-- ⭐️ UI 개선: 총 합계 (크기 2배 이상, 디자인 변경) ⭐️ -->
                     <div id="totals" class="bg-white border-2 border-green-500 p-4 rounded-xl shadow-lg font-bold text-gray-800">
                         <h3 class="text-xl sm:text-2xl mb-3 text-green-700">✅ 총 합계</h3>
                         <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-center">
@@ -159,6 +178,7 @@
                             </div>
                         </div>
                     </div>
+
                     <button id="save-button"
                             class="w-full bg-green-600 text-white py-3 rounded-xl hover:bg-green-700 transition-colors duration-200 font-bold shadow-lg transform hover:scale-[1.01]">
                         오늘의 식단 저장
@@ -166,6 +186,7 @@
                 </div>
             </div>
 
+            <!-- 저장 기록 조회 뷰 -->
             <div id="report-view" class="hidden space-y-6">
                 <h2 class="text-2xl font-bold text-gray-800">식단 저장 기록</h2>
                 
@@ -195,10 +216,20 @@
                         기록 조회
                     </button>
                 </div>
+                <!-- 보고서 내용 표시 영역 -->
                 <div id="report-content" class="bg-white rounded-xl shadow-inner p-4 max-h-[60vh] overflow-y-auto">
                     <p class="text-gray-500 text-center p-10" id="report-loading-message">
                         저장된 기록을 불러오는 중...
                     </p>
+                </div>
+            </div>
+
+            <!-- ⭐️ NEW VIEW: 게시판 뷰 ⭐️ -->
+            <div id="community-view" class="hidden space-y-6">
+                <h2 class="text-2xl font-bold text-gray-800">다이어트 정보 게시판</h2>
+                <div id="community-main-content" class="min-h-[50vh] bg-gray-50 p-4 rounded-xl shadow-inner overflow-y-auto">
+                    <!-- Content will be injected here: list, detail, or form -->
+                    <p class="text-gray-500 text-center p-10">게시판 로드 중...</p>
                 </div>
             </div>
             
@@ -206,6 +237,7 @@
         
     </div>
 
+    <!-- 모달 (Modal) 컨테이너 -->
     <div id="modal-container" class="hidden fixed inset-0 bg-gray-900 bg-opacity-50 z-50 flex items-center justify-center p-4" onclick="document.getElementById('modal-container').classList.add('hidden');">
         <div id="modal-content" class="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm transform transition-all duration-300 scale-100" onclick="event.stopPropagation();">
             <h3 id="modal-title" class="text-xl font-bold mb-3 text-red-600">제목</h3>
@@ -242,6 +274,10 @@
         const friendIdInput = document.getElementById('friend-user-id'); 
         const reportSearchButton = document.getElementById('report-search-button');
         const selfSearchButton = document.getElementById('self-search-button');
+        
+        // ⭐️ NEW DOM ELEMENT: 게시판 ⭐️
+        const communityMainContent = document.getElementById('community-main-content');
+        let currentEditingPost = null; // 수정 중인 게시물 ID
 
         let db, auth, userId, appId;
 
@@ -332,7 +368,12 @@
             }
             return `/artifacts/${appId}/users/${id}/daily_meals`;
         }
-
+        
+        // ⭐️ NEW FUNCTION: 게시판 컬렉션 경로 (Public Collection) ⭐️
+        function getCommunityCollectionPath() {
+            return `/artifacts/${appId}/public/data/community_posts`;
+        }
+        
         // 현재 날짜의 식단 데이터 로드 (이전 코드와 동일)
         async function loadMealsForDate(date) {
             meals = []; 
@@ -361,7 +402,7 @@
             renderMeals();
         }
 
-        // ⭐️⭐️⭐️ [UI 개선: 식단 목록 렌더링] 개별 식단 영양소 정보 강조 ⭐️⭐️⭐️
+        // ⭐️ UI 개선: 식단 목록 렌더링 ⭐️
         function renderMeals() {
             mealsList.innerHTML = '';
             
@@ -378,7 +419,6 @@
 
                 meals.forEach((meal, index) => {
                     const mealItem = document.createElement('div');
-                    // 1. 레이아웃 변경: sm:grid-cols-6을 사용하여 우측에 공간 확보
                     mealItem.className = 'grid grid-cols-6 items-center p-3 bg-white rounded-xl shadow-md border-l-4 border-indigo-400';
                     mealItem.innerHTML = `
                         <div class="col-span-6 sm:col-span-2 flex-grow mb-2 sm:mb-0">
@@ -420,14 +460,11 @@
                 });
             }
 
-            // 총 합계 업데이트
             totalsDisplay.kcal.textContent = totalKcal;
             totalsDisplay.carbs.textContent = totalCarbs;
             totalsDisplay.protein.textContent = totalProtein;
             totalsDisplay.fat.textContent = totalFat;
         }
-        // ⭐️⭐️⭐️ ------------------------------------------------------------------ ⭐️⭐️⭐️
-
 
         // 식단 수정 함수 (이전 코드와 동일)
         window.editMeal = function(index) {
@@ -468,7 +505,6 @@
             meals.push(newMeal);
             renderMeals();
 
-            // 입력 필드 초기화
             mealInput.name.value = '';
             mealInput.kcal.value = '';
             mealInput.carbs.value = '';
@@ -521,38 +557,44 @@
         }
 
 
-        // 뷰 전환 기능 (이전 코드와 동일)
+        // 뷰 전환 기능 (게시판 탭 추가)
         window.switchView = function(viewName) {
-            const dailyInputView = document.getElementById('daily-input-view');
-            const reportView = document.getElementById('report-view');
-            const tabDaily = document.getElementById('tab-daily-input');
-            const tabReport = document.getElementById('tab-report');
+            const views = {
+                'daily-input': document.getElementById('daily-input-view'),
+                'report': document.getElementById('report-view'),
+                'community': document.getElementById('community-view') // NEW
+            };
+            const tabs = {
+                'daily-input': document.getElementById('tab-daily-input'),
+                'report': document.getElementById('tab-report'),
+                'community': document.getElementById('tab-community') // NEW
+            };
 
-            if (viewName === 'daily-input') {
-                dailyInputView.classList.remove('hidden');
-                reportView.classList.add('hidden');
+            const allViews = Object.values(views);
+            const allTabs = Object.values(tabs);
+
+            allViews.forEach(v => v.classList.add('hidden'));
+            allTabs.forEach(t => {
+                t.classList.remove('border-indigo-500', 'text-indigo-600', 'border-board-color', 'text-board-color');
+                t.classList.add('border-transparent', 'text-gray-500');
+            });
+
+
+            if (views[viewName]) {
+                views[viewName].classList.remove('hidden');
                 
-                tabDaily.classList.add('border-indigo-500', 'text-indigo-600');
-                tabDaily.classList.remove('border-transparent', 'text-gray-500');
-                tabReport.classList.remove('border-indigo-500', 'text-indigo-600');
-                tabReport.classList.add('border-transparent', 'text-gray-500');
-
-                loadMealsForDate(mealInput.date.value);
-
-            } else if (viewName === 'report') {
-                dailyInputView.classList.add('hidden');
-                reportView.classList.remove('hidden');
-
-                tabReport.classList.add('border-indigo-500', 'text-indigo-600');
-                tabReport.classList.remove('border-transparent', 'text-gray-500');
-                tabDaily.classList.remove('border-indigo-500', 'text-indigo-600');
-                tabDaily.classList.add('border-transparent', 'text-gray-500');
-
-                renderReport();
+                if (viewName === 'community') {
+                    tabs[viewName].classList.add('border-board-color', 'text-board-color');
+                    window.renderCommunityView();
+                } else {
+                    tabs[viewName].classList.add('border-indigo-500', 'text-indigo-600');
+                    if (viewName === 'daily-input') loadMealsForDate(mealInput.date.value);
+                    else if (viewName === 'report') renderReport();
+                }
             }
         }
 
-        // ⭐️⭐️⭐️ [UI 개선: 보고서 렌더링] 날짜와 합계 정보 강조 ⭐️⭐️⭐️
+        // UI 개선: 보고서 렌더링 (이전 코드와 동일)
         window.renderReport = async function() {
             const reportContent = document.getElementById('report-content');
             const loadingMessage = document.getElementById('report-loading-message');
@@ -573,10 +615,9 @@
             const endDate = document.getElementById('report-end-date')?.value;
 
             if (!startDate || !endDate || startDate > endDate || !db || !targetUserId) {
-                 // 오류 메시지 로직은 그대로 유지
-                if (!startDate || !endDate) loadingMessage.textContent = `${viewTitle}: 조회할 시작일과 종료일을 선택해주세요.`;
-                else if (startDate > endDate) loadingMessage.textContent = `${viewTitle}: 시작일은 종료일보다 이전 날짜여야 합니다.`;
-                else loadingMessage.textContent = `❌ ${viewTitle}: 데이터베이스 연결 실패 또는 사용자 ID를 찾을 수 없습니다.`;
+                 if (!startDate || !endDate) loadingMessage.textContent = `${viewTitle}: 조회할 시작일과 종료일을 선택해주세요.`;
+                 else if (startDate > endDate) loadingMessage.textContent = `${viewTitle}: 시작일은 종료일보다 이전 날짜여야 합니다.`;
+                 else loadingMessage.textContent = `❌ ${viewTitle}: 데이터베이스 연결 실패 또는 사용자 ID를 찾을 수 없습니다.`;
                 loadingMessage.classList.add('text-red-500');
                 return;
             }
@@ -612,7 +653,6 @@
 
                 reportData.forEach(day => {
                     const dayElement = document.createElement('div');
-                    // 배경/테두리 색상 변경
                     dayElement.className = 'bg-white p-4 rounded-xl shadow-lg mb-6 border-l-4 border-blue-500';
 
                     const totalMeals = day.meals ? day.meals.length : 0;
@@ -662,10 +702,256 @@
                 </p>`;
             }
         }
-        // ⭐️⭐️⭐️ ----------------------------------------------------------- ⭐️⭐️⭐️
+        
+        // ⭐️ NEW FUNCTION: 게시판 로직 ⭐️
+
+        // 1. 게시판 메인 뷰 렌더링 (게시물 목록 표시)
+        window.renderCommunityView = async function() {
+            communityMainContent.innerHTML = `<p class="text-gray-500 text-center p-10">게시물 목록을 불러오는 중...</p>`;
+            currentEditingPost = null;
+
+            if (!db) {
+                communityMainContent.innerHTML = `<p class="text-red-500 text-center p-10">데이터베이스 연결에 실패했습니다.</p>`;
+                return;
+            }
+            
+            try {
+                const colRef = window.collection(db, getCommunityCollectionPath());
+                // 제목 목록을 불러와서 최신순으로 정렬 (id는 날짜 기준이 아니므로 timestamp 기준으로 정렬)
+                const querySnapshot = await window.getDocs(colRef);
+                
+                const posts = [];
+                querySnapshot.forEach(doc => {
+                    const data = doc.data();
+                    posts.push({ id: doc.id, ...data });
+                });
+
+                // timestamp 역순으로 정렬 (최신글이 위로)
+                posts.sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
+
+                let postListHtml = `
+                    <div class="flex justify-between items-center mb-6 border-b pb-3">
+                        <p class="text-lg font-bold text-board-color">${posts.length}개의 정보가 있습니다.</p>
+                        <button onclick="window.openPostForm()" 
+                                class="bg-board-color text-white py-2 px-4 rounded-lg hover:bg-pink-700 transition-colors font-medium shadow-md">
+                            + 새 글 작성
+                        </button>
+                    </div>
+                    <div class="space-y-3">
+                `;
+
+                if (posts.length === 0) {
+                    postListHtml += `<p class="text-gray-500 text-center p-10">작성된 게시물이 아직 없습니다.</p>`;
+                } else {
+                    posts.forEach(post => {
+                        const authorId = post.authorId ? post.authorId.substring(0, 8) + '...' : '익명';
+                        const date = post.timestamp ? new Date(post.timestamp).toLocaleString() : '날짜 불명';
+                        
+                        postListHtml += `
+                            <div onclick="window.renderPostDetail('${post.id}')"
+                                class="p-4 bg-white rounded-lg shadow-md hover:shadow-lg transition duration-150 cursor-pointer border-l-4 border-board-color hover:bg-pink-50">
+                                <p class="font-extrabold text-xl text-gray-800">${post.title}</p>
+                                <p class="text-xs text-gray-500 mt-2">
+                                    <span class="font-semibold text-gray-600">작성자:</span> ${authorId}
+                                    <span class="ml-4 font-semibold text-gray-600">작성일:</span> ${date}
+                                </p>
+                            </div>
+                        `;
+                    });
+                }
+                
+                postListHtml += `</div>`;
+                communityMainContent.innerHTML = postListHtml;
+
+            } catch (error) {
+                console.error("게시물 목록 로드 오류:", error);
+                communityMainContent.innerHTML = `<p class="text-red-500 text-center p-10">게시물 로드 중 오류 발생: ${error.message}</p>`;
+            }
+        }
+        
+        // 2. 게시물 상세 보기
+        window.renderPostDetail = async function(postId) {
+            communityMainContent.innerHTML = `<p class="text-gray-500 text-center p-10">게시물 내용을 불러오는 중...</p>`;
+            
+            try {
+                const docRef = window.doc(db, getCommunityCollectionPath(), postId);
+                const docSnap = await window.getDoc(docRef);
+
+                if (docSnap.exists()) {
+                    const post = { id: docSnap.id, ...docSnap.data() };
+                    const authorIdDisplay = post.authorId ? post.authorId.substring(0, 8) + '...' : '익명';
+                    const fullAuthorId = post.authorId || '익명';
+                    const dateDisplay = post.timestamp ? new Date(post.timestamp).toLocaleString() : '날짜 불명';
+
+                    // 수정/삭제 버튼은 현재 로그인된 ID(고정 ID)와 작성자 ID가 일치할 때만 표시
+                    const isAuthor = (fullAuthorId === userId);
+                    
+                    const detailHtml = `
+                        <div class="space-y-4">
+                            <button onclick="window.renderCommunityView()" 
+                                    class="text-blue-600 hover:text-blue-800 font-medium mb-4 flex items-center">
+                                <span style="font-size: 1.5rem; line-height: 1;">&larr;</span>&nbsp; 목록으로 돌아가기
+                            </button>
+                            
+                            <div class="p-6 bg-white rounded-xl shadow-xl space-y-4 border-t-4 border-board-color">
+                                <h3 class="text-3xl font-extrabold text-board-color break-words">${post.title}</h3>
+                                <p class="text-sm text-gray-500 border-b pb-2">
+                                    <span class="font-semibold text-gray-700">작성자:</span> ${authorIdDisplay} 
+                                    <span class="ml-4 font-semibold text-gray-700">작성일:</span> ${dateDisplay}
+                                </p>
+                                <div class="bg-gray-50 p-6 rounded-lg text-gray-800 text-base leading-relaxed whitespace-pre-wrap shadow-inner min-h-[200px]">
+                                    ${post.content.replace(/\n/g, '<br>')}
+                                </div>
+                                
+                                <div class="flex justify-end space-x-3 pt-4">
+                                    ${isAuthor ? `
+                                        <button onclick="window.openPostForm(post)" 
+                                                class="bg-blue-500 text-white py-2 px-4 rounded-xl hover:bg-blue-600 transition-colors font-medium">
+                                            수정
+                                        </button>
+                                        <button onclick="window.deletePost('${post.id}')" 
+                                                class="bg-red-500 text-white py-2 px-4 rounded-xl hover:bg-red-600 transition-colors font-medium">
+                                            삭제
+                                        </button>
+                                    ` : `<p class="text-sm text-gray-500">작성자만 수정/삭제할 수 있습니다.</p>`}
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    communityMainContent.innerHTML = detailHtml;
+                    currentEditingPost = null;
+
+                } else {
+                    communityMainContent.innerHTML = `<p class="text-red-500 text-center p-10">해당 게시물을 찾을 수 없습니다.</p>`;
+                }
+
+            } catch (error) {
+                console.error("게시물 상세 로드 오류:", error);
+                communityMainContent.innerHTML = `<p class="text-red-500 text-center p-10">게시물 상세 내용을 불러오는 중 오류 발생: ${error.message}</p>`;
+            }
+        }
+        
+        // 3. 게시물 작성/수정 폼 열기
+        window.openPostForm = function(postData = null) {
+            currentEditingPost = postData ? postData.id : null;
+            const title = postData ? postData.title : '';
+            const content = postData ? postData.content : '';
+            const formTitle = postData ? '글 수정하기' : '새 글 작성하기';
+            const buttonText = postData ? '수정 완료' : '작성 완료';
+
+            const formHtml = `
+                <div class="p-6 bg-white rounded-xl shadow-xl space-y-4 border-t-4 border-board-color">
+                    <h3 class="text-2xl font-bold text-board-color">${formTitle}</h3>
+                    
+                    <div>
+                        <label for="post-title-input" class="block text-sm font-medium text-gray-700 mb-1">제목:</label>
+                        <input type="text" id="post-title-input" value="${title}" 
+                               placeholder="직관적이고 눈에 띄는 제목을 입력하세요."
+                               class="w-full p-3 border border-gray-300 rounded-lg focus:ring-board-color focus:border-board-color text-lg font-semibold">
+                    </div>
+                    
+                    <div>
+                        <label for="post-content-input" class="block text-sm font-medium text-gray-700 mb-1">내용:</label>
+                        <textarea id="post-content-input" placeholder="유용한 다이어트 정보를 공유해주세요."
+                                  class="w-full p-3 border border-gray-300 rounded-lg focus:ring-board-color focus:border-board-color min-h-[300px] text-base leading-relaxed">${content}</textarea>
+                    </div>
+                    
+                    <div class="flex justify-end space-x-3 pt-4">
+                        <button onclick="window.renderCommunityView()" 
+                                class="bg-gray-400 text-white py-2 px-4 rounded-xl hover:bg-gray-500 transition-colors font-medium">
+                            취소
+                        </button>
+                        <button onclick="window.savePost('${currentEditingPost}')" 
+                                class="bg-board-color text-white py-2 px-4 rounded-xl hover:bg-pink-700 transition-colors font-medium">
+                            ${buttonText}
+                        </button>
+                    </div>
+                </div>
+            `;
+            communityMainContent.innerHTML = formHtml;
+        }
+
+        // 4. 게시물 저장/수정 처리
+        window.savePost = async function(postId) {
+            const titleInput = document.getElementById('post-title-input');
+            const contentInput = document.getElementById('post-content-input');
+            
+            const title = titleInput.value.trim();
+            const content = contentInput.value.trim();
+
+            if (!title || !content) {
+                showModal("입력 오류", "제목과 내용을 모두 입력해주세요.", true);
+                return;
+            }
+            
+            if (!db || !userId) {
+                showModal("저장 오류", "데이터베이스 연결이 불안정합니다.", true);
+                return;
+            }
+
+            try {
+                const colRef = window.collection(db, getCommunityCollectionPath());
+                let docRef;
+                
+                const postData = {
+                    title: title,
+                    content: content,
+                    authorId: userId, // 현재 로그인된 고정 ID를 작성자로 저장
+                };
+
+                if (postId && postId !== 'null') {
+                    // 수정
+                    docRef = window.doc(colRef, postId);
+                    await window.setDoc(docRef, { ...postData, lastModified: new Date().toISOString() }, { merge: true });
+                    showModal("수정 완료", "게시물이 성공적으로 수정되었습니다.", false);
+                } else {
+                    // 새로 작성
+                    docRef = window.doc(colRef, new Date().getTime().toString()); // 타임스탬프를 문서 ID로 사용
+                    await window.setDoc(docRef, { ...postData, timestamp: new Date().toISOString() });
+                    showModal("작성 완료", "새 게시물이 성공적으로 작성되었습니다.", false);
+                }
+
+                // 저장 후 목록으로 돌아가기
+                window.renderCommunityView();
+
+            } catch (error) {
+                console.error("게시물 저장 오류:", error);
+                showModal("데이터 저장 오류", `게시물 저장 중 오류 발생: ${error.message}`, true);
+            }
+        }
+        
+        // 5. 게시물 삭제 처리
+        window.deletePost = async function(postId) {
+            if (!confirm(`정말로 이 게시물(${postId.substring(0, 8)}...)을 삭제하시겠습니까?`)) {
+                return;
+            }
+
+            if (!db || !userId) {
+                showModal("삭제 오류", "데이터베이스 연결이 불안정합니다.", true);
+                return;
+            }
+
+            try {
+                // 작성자 ID를 확인하는 로직 (삭제 권한 체크)
+                const docRefCheck = window.doc(db, getCommunityCollectionPath(), postId);
+                const docSnapCheck = await window.getDoc(docRefCheck);
+
+                if (docSnapCheck.exists() && docSnapCheck.data().authorId === userId) {
+                    const docRef = window.doc(db, getCommunityCollectionPath(), postId);
+                    await window.deleteDoc(docRef);
+                    showModal("삭제 완료", "게시물이 성공적으로 삭제되었습니다.", false);
+                    window.renderCommunityView();
+                } else {
+                    showModal("권한 오류", "이 게시물은 작성자만 삭제할 수 있습니다.", true);
+                }
+            } catch (error) {
+                console.error("게시물 삭제 오류:", error);
+                showModal("데이터 삭제 오류", `게시물 삭제 중 오류 발생: ${error.message}`, true);
+            }
+        }
 
 
-        // 이벤트 리스너 및 초기화 (이전 코드와 동일)
+        // 이벤트 리스너 및 초기화
         window.onload = function() {
             const today = new Date().toISOString().substring(0, 10);
             mealInput.date.value = today;
